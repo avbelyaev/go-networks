@@ -14,20 +14,25 @@ import (
 	"strconv"
 )
 
-
 type Client struct {
-	logger log.Logger    // Объект для печати логов
-	conn   *net.TCPConn  // Объект TCP-соединения
-	enc    *json.Encoder // Объект для кодирования и отправки сообщений
+	logger   log.Logger    // Объект для печати логов
+	conn     *net.TCPConn  // Объект TCP-соединения
+	enc      *json.Encoder // Объект для кодирования и отправки сообщений
+	point    proto.Point   // Текущая конечная точка прямой
+	len      float64       // Текущая длина кривой
+	pointNum int           // Кол-во точек
 }
 
 // NewClient - конструктор клиента, принимает в качестве параметра
 // объект TCP-соединения.
 func NewClient(conn *net.TCPConn) *Client {
 	return &Client{
-		logger: log.New(fmt.Sprintf("client %s", conn.RemoteAddr().String())),
-		conn:   conn,
-		enc:    json.NewEncoder(conn),
+		logger:   log.New(fmt.Sprintf("client %s", conn.RemoteAddr().String())),
+		conn:     conn,
+		enc:      json.NewEncoder(conn),
+		point:    proto.Point{},
+		len:      0,
+		pointNum: 0,
 	}
 }
 
@@ -51,11 +56,10 @@ func (client *Client) serve() {
 	}
 }
 
-// конвертирует в float64 аргументы, возводит дельту аргументов в квадрат
-func countSquareDifference(coord1 string, coord2 string) (float64, error) {
+func squareDifference(coord1 string, coord2 string) (float64, error) {
 	circleCenterX, err := strconv.ParseFloat(string(coord1), 64)
 	circleContourX, err := strconv.ParseFloat(string(coord2), 64)
-	if nil != err {
+	if err != nil {
 		return 0, err
 
 	} else {
@@ -64,19 +68,43 @@ func countSquareDifference(coord1 string, coord2 string) (float64, error) {
 	}
 }
 
-func countCircleSquare(circle proto.Circle) (float64, error) {
-	deltaXSquared, err := countSquareDifference(circle.Center.CoordX, circle.Contour.CoordX)
-	if nil != err {
+func distBetweenPoints(pointA proto.Point, pointB proto.Point) (float64, error) {
+	// delta_x ^ 2
+	dX2, err := squareDifference(pointA.X, pointB.X)
+	if err != nil {
 		return 0, err
 	}
 
-	deltaYSquared, err := countSquareDifference(circle.Center.CoordY, circle.Contour.CoordY)
-	if nil != err {
+	dY2, err := squareDifference(pointA.Y, pointB.Y)
+	if err != nil {
 		return 0, err
 	}
 
-	radius := math.Sqrt(deltaXSquared + deltaYSquared)
-	return math.Pi * radius * radius, nil
+	return math.Sqrt(dX2 + dY2), nil
+}
+
+func (client *Client) addPoint(newPoint proto.Point) bool {
+	if client.pointNum == 0 {
+		// if its the first point, just report ok
+		client.point = newPoint
+		client.pointNum += 1
+		return true
+
+	} else {
+		// count distance between line's end point and new point
+		currentEndPoint := client.point
+		if increasedLen, err := distBetweenPoints(currentEndPoint, newPoint); err != nil {
+			// if distance could not be counted, report false
+			return false
+
+		} else {
+			// otherwise update line info
+			client.len += increasedLen
+			client.point = newPoint
+			client.pointNum += 1
+			return true
+		}
+	}
 }
 
 // handleRequest - метод обработки запроса от клиента. Он возвращает true,
@@ -87,34 +115,40 @@ func (client *Client) handleRequest(req *proto.Request) bool {
 		client.respond(proto.RSP_STATUS_OK, nil)
 		return true
 
-	case proto.CMD_COUNT:
+	case proto.CMD_ADD:
 		errorMsg := ""
-		if req.Data == nil {
-			errorMsg = "data field is absent"
+		var point proto.Point
+		// try to deserialize from json
+		if err := json.Unmarshal(*req.Data, &point); err != nil {
+			errorMsg = "malformed data field"
 
 		} else {
-			var circle proto.Circle
-			if err := json.Unmarshal(*req.Data, &circle); err != nil {
-				errorMsg = "malformed data field"
+			// check if point is valid and can be added
+			if client.addPoint(point) {
+				client.logger.Info("point has been added")
+				client.respond(proto.RSP_STATUS_OK, nil)
 
 			} else {
-				if circleSquare, err := countCircleSquare(circle); nil != err {
-					errorMsg = "could not count circle square, invalid circle data provided"
-
-				} else {
-					circleSquareAsString := strconv.FormatFloat(circleSquare, 'f', 6, 64)
-					client.logger.Info("square of circle has been counted", "value", circleSquareAsString)
-
-					client.respond(proto.RSP_STATUS_SUCCESS, circleSquareAsString)
-				}
+				errorMsg = "point cannot be added"
 			}
 		}
-		if errorMsg == "" {
-			client.respond(proto.RSP_STATUS_OK, nil)
+		if errorMsg != "" {
+			client.logger.Error("addition failed", "reason", errorMsg)
+			client.respond(proto.RSP_STATUS_FAILED, errorMsg)
+		}
+
+	case proto.CMD_COUNT:
+		errorMsg := ""
+		print(client.pointNum)
+		if client.pointNum >= 2 {
+			lineLen := strconv.FormatFloat(client.len, 'f', 6, 64)
+			client.logger.Info("calculation succeeded", "length", lineLen)
+			client.respond(proto.RSP_STATUS_RESULT, lineLen)
 
 		} else {
-			client.logger.Error("count failed", "reason", errorMsg)
-			client.respond(proto.RSP_STATUS_FAIL, errorMsg)
+			errorMsg = "could not count length. not enough points"
+			client.logger.Error("calculation failed", "reason", errorMsg)
+			client.respond(proto.RSP_STATUS_FAILED, errorMsg)
 		}
 
 	default:

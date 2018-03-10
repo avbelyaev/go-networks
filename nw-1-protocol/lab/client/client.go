@@ -25,17 +25,16 @@ func interact(conn *net.TCPConn) {
 			return
 
 		case proto.CMD_COUNT:
-			var circle proto.Circle
-			fmt.Printf("Center X coordinate:")
-			circle.Center.CoordX = input.Gets()
-			fmt.Printf("Center X coordinate:")
-			circle.Center.CoordY = input.Gets()
-			fmt.Printf("Contour X coordinate:")
-			circle.Contour.CoordX = input.Gets()
-			fmt.Printf("Contour Y coordinate:")
-			circle.Contour.CoordY = input.Gets()
+			send_request(encoder, proto.CMD_COUNT, nil)
 
-			send_request(encoder, proto.CMD_COUNT, circle)
+		case proto.CMD_ADD:
+			var point proto.Point
+			fmt.Printf("X coord: ")
+			point.X = input.Gets()
+			fmt.Printf("Y coord: ")
+			point.Y = input.Gets()
+
+			send_request(encoder, proto.CMD_ADD, point)
 
 		default:
 			fmt.Printf("error: unknown command\n")
@@ -53,7 +52,7 @@ func interact(conn *net.TCPConn) {
 		case proto.RSP_STATUS_OK:
 			fmt.Printf("ok\n")
 
-		case proto.RSP_STATUS_FAIL:
+		case proto.RSP_STATUS_FAILED:
 			if rsp.Data == nil {
 				fmt.Printf("error: data field is absent in response\n")
 
@@ -67,17 +66,17 @@ func interact(conn *net.TCPConn) {
 				}
 			}
 
-		case proto.RSP_STATUS_SUCCESS:
+		case proto.RSP_STATUS_RESULT:
 			if rsp.Data == nil {
 				fmt.Printf("error: data field is absent in response\n")
 
 			} else {
-				var circleSquare string
-				if err := json.Unmarshal(*rsp.Data, &circleSquare); err != nil {
+				var lineLen string
+				if err := json.Unmarshal(*rsp.Data, &lineLen); err != nil {
 					fmt.Printf("error: malformed data field in response\n")
 
 				} else {
-					fmt.Printf("success: circle square is %s\n", circleSquare)
+					fmt.Printf("result: line lenght is %s\n", lineLen)
 				}
 			}
 
