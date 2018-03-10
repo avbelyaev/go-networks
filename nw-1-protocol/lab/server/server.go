@@ -39,7 +39,7 @@ func (client *Client) serve() {
 	for {
 		var req proto.Request
 		if err := decoder.Decode(&req); err != nil {
-			client.logger.Error("cannot decode message", "reason", err)
+			client.logger.Error("cannot decode message")
 			break
 		} else {
 			client.logger.Info("received command", "command", req.Command)
@@ -99,11 +99,13 @@ func (client *Client) handleRequest(req *proto.Request) bool {
 
 			} else {
 				if circleSquare, err := countCircleSquare(circle); nil != err {
-					errorMsg = "could not count square for circle provided"
+					errorMsg = "could not count circle square, invalid circle data provided"
 
 				} else {
-					client.logger.Info("square of circle has been counted", "value", circleSquare)
-					client.respond(proto.RSP_STATUS_SUCCESS, "123")
+					circleSquareAsString := strconv.FormatFloat(circleSquare, 'f', 6, 64)
+					client.logger.Info("square of circle has been counted", "value", circleSquareAsString)
+
+					client.respond(proto.RSP_STATUS_SUCCESS, circleSquareAsString)
 				}
 			}
 		}

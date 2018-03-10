@@ -77,7 +77,7 @@ func interact(conn *net.TCPConn) {
 					fmt.Printf("error: malformed data field in response\n")
 
 				} else {
-					fmt.Printf("success: circle square is %s", circleSquare)
+					fmt.Printf("success: circle square is %s\n", circleSquare)
 				}
 			}
 
