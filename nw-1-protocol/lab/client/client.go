@@ -8,71 +8,81 @@ import (
 	"net"
 )
 
-import "network-labs/nw-1-protocol/sample/proto"
+import (
+	"network-labs/nw-1-protocol/lab/proto"
+)
 
-// interact - функция, содержащая цикл взаимодействия с сервером.
 func interact(conn *net.TCPConn) {
 	defer conn.Close()
 	encoder, decoder := json.NewEncoder(conn), json.NewDecoder(conn)
 	for {
-		// Чтение команды из стандартного потока ввода
 		fmt.Printf("command = ")
 		command := input.Gets()
 
-		// Отправка запроса.
 		switch command {
-		case "quit":
-			send_request(encoder, "quit", nil)
+		case proto.CMD_QUIT:
+			send_request(encoder, proto.CMD_QUIT, nil)
 			return
-		case "add":
-			var frac proto.Fraction
-			fmt.Printf("numerator = ")
-			frac.Numerator = input.Gets()
-			fmt.Printf("denominator = ")
-			frac.Denominator = input.Gets()
-			send_request(encoder, "add", &frac)
-		case "avg":
-			send_request(encoder, "avg", nil)
+
+		case proto.CMD_COUNT:
+			var circle proto.Circle
+			fmt.Printf("Center X coordinate:")
+			circle.Center.CoordX = input.Gets()
+			fmt.Printf("Center X coordinate:")
+			circle.Center.CoordY = input.Gets()
+			fmt.Printf("Contour X coordinate:")
+			circle.Contour.CoordX = input.Gets()
+			fmt.Printf("Contour Y coordinate:")
+			circle.Contour.CoordY = input.Gets()
+
+			send_request(encoder, proto.CMD_COUNT, circle)
+
 		default:
 			fmt.Printf("error: unknown command\n")
 			continue
 		}
 
 		// Получение ответа.
-		var resp proto.Response
-		if err := decoder.Decode(&resp); err != nil {
+		var rsp proto.Response
+		if err := decoder.Decode(&rsp); err != nil {
 			fmt.Printf("error: %v\n", err)
 			break
 		}
 
-		// Вывод ответа в стандартный поток вывода.
-		switch resp.Status {
-		case "ok":
+		switch rsp.Status {
+		case proto.RSP_STATUS_OK:
 			fmt.Printf("ok\n")
-		case "failed":
-			if resp.Data == nil {
+
+		case proto.RSP_STATUS_FAIL:
+			if rsp.Data == nil {
 				fmt.Printf("error: data field is absent in response\n")
+
 			} else {
 				var errorMsg string
-				if err := json.Unmarshal(*resp.Data, &errorMsg); err != nil {
+				if err := json.Unmarshal(*rsp.Data, &errorMsg); err != nil {
 					fmt.Printf("error: malformed data field in response\n")
+
 				} else {
-					fmt.Printf("failed: %s\n", errorMsg)
+					fmt.Printf("fail: %s\n", errorMsg)
 				}
 			}
-		case "result":
-			if resp.Data == nil {
+
+		case proto.RSP_STATUS_SUCCESS:
+			if rsp.Data == nil {
 				fmt.Printf("error: data field is absent in response\n")
+
 			} else {
-				var frac proto.Fraction
-				if err := json.Unmarshal(*resp.Data, &frac); err != nil {
+				var circleSquare string
+				if err := json.Unmarshal(*rsp.Data, &circleSquare); err != nil {
 					fmt.Printf("error: malformed data field in response\n")
+
 				} else {
-					fmt.Printf("result: %s/%s\n", frac.Numerator, frac.Denominator)
+					fmt.Printf("success: circle square is %s", circleSquare)
 				}
 			}
+
 		default:
-			fmt.Printf("error: server reports unknown status %q\n", resp.Status)
+			fmt.Printf("error: server reports unknown status %q\n", rsp.Status)
 		}
 	}
 }
@@ -88,7 +98,7 @@ func send_request(encoder *json.Encoder, command string, data interface{}) {
 func main() {
 	// Работа с командной строкой, в которой может указываться необязательный ключ -addr.
 	var addrStr string
-	flag.StringVar(&addrStr, "addr", "127.0.0.1:6000", "specify ip address and port")
+	flag.StringVar(&addrStr, "addr", "127.0.0.1:6002", "specify ip address and port")
 	flag.Parse()
 
 	// Разбор адреса, установка соединения с сервером и
