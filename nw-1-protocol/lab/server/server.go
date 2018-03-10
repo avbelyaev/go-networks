@@ -5,21 +5,20 @@ import (
 	"flag"
 	"fmt"
 	"github.com/mgutz/logxi/v1"
-	"math/big"
+	"math"
 	"net"
 )
 
 import (
-	"network-labs/nw-1-protocol/sample/proto"
+	"network-labs/nw-1-protocol/lab/proto"
+	"strconv"
 )
 
-// Client - состояние клиента.
+
 type Client struct {
 	logger log.Logger    // Объект для печати логов
 	conn   *net.TCPConn  // Объект TCP-соединения
 	enc    *json.Encoder // Объект для кодирования и отправки сообщений
-	sum    *big.Rat      // Текущая сумма полученных от клиента дробей
-	count  int64         // Количество полученных от клиента дробей
 }
 
 // NewClient - конструктор клиента, принимает в качестве параметра
@@ -29,8 +28,6 @@ func NewClient(conn *net.TCPConn) *Client {
 		logger: log.New(fmt.Sprintf("client %s", conn.RemoteAddr().String())),
 		conn:   conn,
 		enc:    json.NewEncoder(conn),
-		sum:    big.NewRat(0, 1),
-		count:  0,
 	}
 }
 
@@ -54,50 +51,70 @@ func (client *Client) serve() {
 	}
 }
 
+// конвертирует в float64 аргументы, возводит дельту аргументов в квадрат
+func countSquareDifference(coord1 string, coord2 string) (float64, error) {
+	circleCenterX, err := strconv.ParseFloat(string(coord1), 64)
+	circleContourX, err := strconv.ParseFloat(string(coord2), 64)
+	if nil != err {
+		return 0, err
+
+	} else {
+		delta := circleCenterX - circleContourX
+		return delta * delta, nil
+	}
+}
+
+func countCircleSquare(circle proto.Circle) (float64, error) {
+	deltaXSquared, err := countSquareDifference(circle.Center.CoordX, circle.Contour.CoordX)
+	if nil != err {
+		return 0, err
+	}
+
+	deltaYSquared, err := countSquareDifference(circle.Center.CoordY, circle.Contour.CoordY)
+	if nil != err {
+		return 0, err
+	}
+
+	radius := math.Sqrt(deltaXSquared + deltaYSquared)
+	return math.Pi * radius * radius, nil
+}
+
 // handleRequest - метод обработки запроса от клиента. Он возвращает true,
 // если клиент передал команду "quit" и хочет завершить общение.
 func (client *Client) handleRequest(req *proto.Request) bool {
 	switch req.Command {
-	case "quit":
-		client.respond("ok", nil)
+	case proto.CMD_QUIT:
+		client.respond(proto.RSP_STATUS_OK, nil)
 		return true
-	case "add":
+
+	case proto.CMD_COUNT:
 		errorMsg := ""
 		if req.Data == nil {
 			errorMsg = "data field is absent"
+
 		} else {
-			var frac proto.Fraction
-			if err := json.Unmarshal(*req.Data, &frac); err != nil {
+			var circle proto.Circle
+			if err := json.Unmarshal(*req.Data, &circle); err != nil {
 				errorMsg = "malformed data field"
+
 			} else {
-				var x big.Rat
-				if _, ok := x.SetString(frac.Numerator + "/" + frac.Denominator); !ok {
-					errorMsg = "malformed data field"
+				if circleSquare, err := countCircleSquare(circle); nil != err {
+					errorMsg = "could not count square for circle provided"
+
 				} else {
-					client.logger.Info("performing addition", "value", x.String())
-					client.sum.Add(client.sum, &x)
-					client.count++
+					client.logger.Info("square of circle has been counted", "value", circleSquare)
+					client.respond(proto.RSP_STATUS_SUCCESS, "123")
 				}
 			}
 		}
 		if errorMsg == "" {
-			client.respond("ok", nil)
+			client.respond(proto.RSP_STATUS_OK, nil)
+
 		} else {
-			client.logger.Error("addition failed", "reason", errorMsg)
-			client.respond("failed", errorMsg)
+			client.logger.Error("count failed", "reason", errorMsg)
+			client.respond(proto.RSP_STATUS_FAIL, errorMsg)
 		}
-	case "avg":
-		if client.count == 0 {
-			client.logger.Error("calculation failed", "reason", "division by zero")
-			client.respond("failed", "division by zero")
-		} else {
-			var avg big.Rat
-			avg.Mul(client.sum, big.NewRat(1, client.count))
-			client.respond("result", &proto.Fraction{
-				Numerator:   avg.Num().String(),
-				Denominator: avg.Denom().String(),
-			})
-		}
+
 	default:
 		client.logger.Error("unknown command")
 		client.respond("failed", "unknown command")
@@ -116,7 +133,7 @@ func (client *Client) respond(status string, data interface{}) {
 func main() {
 	// Работа с командной строкой, в которой может указываться необязательный ключ -addr.
 	var addrStr string
-	flag.StringVar(&addrStr, "addr", "127.0.0.1:6000", "specify ip address and port")
+	flag.StringVar(&addrStr, "addr", "127.0.0.1:6002", "specify ip address and port")
 	flag.Parse()
 
 	// Разбор адреса, строковое представление которого находится в переменной addrStr.
