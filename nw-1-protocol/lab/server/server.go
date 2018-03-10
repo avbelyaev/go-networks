@@ -14,31 +14,26 @@ import (
 	"strconv"
 )
 
-type Client struct {
-	logger   log.Logger    // Объект для печати логов
-	conn     *net.TCPConn  // Объект TCP-соединения
-	enc      *json.Encoder // Объект для кодирования и отправки сообщений
-	point    proto.Point   // Текущая конечная точка прямой
-	len      float64       // Текущая длина кривой
-	pointNum int           // Кол-во точек
+
+type StatelessClient struct {
+	logger log.Logger    // Объект для печати логов
+	conn   *net.TCPConn  // Объект TCP-соединения
+	enc    *json.Encoder // Объект для кодирования и отправки сообщений
 }
 
 // NewClient - конструктор клиента, принимает в качестве параметра
 // объект TCP-соединения.
-func NewClient(conn *net.TCPConn) *Client {
-	return &Client{
-		logger:   log.New(fmt.Sprintf("client %s", conn.RemoteAddr().String())),
-		conn:     conn,
-		enc:      json.NewEncoder(conn),
-		point:    proto.Point{},
-		len:      0,
-		pointNum: 0,
+func NewClient(conn *net.TCPConn) *StatelessClient {
+	return &StatelessClient{
+		logger: log.New(fmt.Sprintf("client %s", conn.RemoteAddr().String())),
+		conn:   conn,
+		enc:    json.NewEncoder(conn),
 	}
 }
 
-// serve - метод, в котором реализован цикл взаимодействия с клиентом.
-// Подразумевается, что метод serve будет вызаваться в отдельной go-программе.
-func (client *Client) serve() {
+// handle - метод, в котором реализован цикл взаимодействия с клиентом.
+// Подразумевается, что метод handle будет вызаваться в отдельной go-программе.
+func (client *StatelessClient) handle() {
 	defer client.conn.Close()
 	decoder := json.NewDecoder(client.conn)
 	for {
@@ -56,10 +51,10 @@ func (client *Client) serve() {
 	}
 }
 
-func squareDifference(coord1 string, coord2 string) (float64, error) {
+func countSquareDifference(coord1 string, coord2 string) (float64, error) {
 	circleCenterX, err := strconv.ParseFloat(string(coord1), 64)
 	circleContourX, err := strconv.ParseFloat(string(coord2), 64)
-	if err != nil {
+	if nil != err {
 		return 0, err
 
 	} else {
@@ -68,87 +63,57 @@ func squareDifference(coord1 string, coord2 string) (float64, error) {
 	}
 }
 
-func distBetweenPoints(pointA proto.Point, pointB proto.Point) (float64, error) {
-	// delta_x ^ 2
-	dX2, err := squareDifference(pointA.X, pointB.X)
-	if err != nil {
+func countCircleSquare(circle proto.Circle) (float64, error) {
+	deltaXSquared, err := countSquareDifference(circle.Center.CoordX, circle.Contour.CoordX)
+	if nil != err {
 		return 0, err
 	}
 
-	dY2, err := squareDifference(pointA.Y, pointB.Y)
-	if err != nil {
+	deltaYSquared, err := countSquareDifference(circle.Center.CoordY, circle.Contour.CoordY)
+	if nil != err {
 		return 0, err
 	}
 
-	return math.Sqrt(dX2 + dY2), nil
-}
-
-func (client *Client) addPoint(newPoint proto.Point) bool {
-	if client.pointNum == 0 {
-		// if its the first point, just report ok
-		client.point = newPoint
-		client.pointNum += 1
-		return true
-
-	} else {
-		// count distance between line's end point and new point
-		currentEndPoint := client.point
-		if increasedLen, err := distBetweenPoints(currentEndPoint, newPoint); err != nil {
-			// if distance could not be counted, report false
-			return false
-
-		} else {
-			// otherwise update line info
-			client.len += increasedLen
-			client.point = newPoint
-			client.pointNum += 1
-			return true
-		}
-	}
+	radius := math.Sqrt(deltaXSquared + deltaYSquared)
+	return math.Pi * radius * radius, nil
 }
 
 // handleRequest - метод обработки запроса от клиента. Он возвращает true,
 // если клиент передал команду "quit" и хочет завершить общение.
-func (client *Client) handleRequest(req *proto.Request) bool {
+func (client *StatelessClient) handleRequest(req *proto.Request) bool {
 	switch req.Command {
 	case proto.CMD_QUIT:
 		client.respond(proto.RSP_STATUS_OK, nil)
 		return true
 
-	case proto.CMD_ADD:
-		errorMsg := ""
-		var point proto.Point
-		// try to deserialize from json
-		if err := json.Unmarshal(*req.Data, &point); err != nil {
-			errorMsg = "malformed data field"
-
-		} else {
-			// check if point is valid and can be added
-			if client.addPoint(point) {
-				client.logger.Info("point has been added")
-				client.respond(proto.RSP_STATUS_OK, nil)
-
-			} else {
-				errorMsg = "point cannot be added"
-			}
-		}
-		if errorMsg != "" {
-			client.logger.Error("addition failed", "reason", errorMsg)
-			client.respond(proto.RSP_STATUS_FAILED, errorMsg)
-		}
-
 	case proto.CMD_COUNT:
 		errorMsg := ""
-		print(client.pointNum)
-		if client.pointNum >= 2 {
-			lineLen := strconv.FormatFloat(client.len, 'f', 6, 64)
-			client.logger.Info("calculation succeeded", "length", lineLen)
-			client.respond(proto.RSP_STATUS_RESULT, lineLen)
+		if req.Data == nil {
+			errorMsg = "data field is absent"
 
 		} else {
-			errorMsg = "could not count length. not enough points"
-			client.logger.Error("calculation failed", "reason", errorMsg)
-			client.respond(proto.RSP_STATUS_FAILED, errorMsg)
+			var circle proto.Circle
+			if err := json.Unmarshal(*req.Data, &circle); err != nil {
+				errorMsg = "malformed data field"
+
+			} else {
+				if circleSquare, err := countCircleSquare(circle); nil != err {
+					errorMsg = "could not count circle square, invalid circle data provided"
+
+				} else {
+					circleSquareAsString := strconv.FormatFloat(circleSquare, 'f', 6, 64)
+					client.logger.Info("square of circle has been counted", "value", circleSquareAsString)
+
+					client.respond(proto.RSP_STATUS_SUCCESS, circleSquareAsString)
+				}
+			}
+		}
+		if errorMsg == "" {
+			client.respond(proto.RSP_STATUS_OK, nil)
+
+		} else {
+			client.logger.Error("count failed", "reason", errorMsg)
+			client.respond(proto.RSP_STATUS_FAIL, errorMsg)
 		}
 
 	default:
@@ -160,7 +125,7 @@ func (client *Client) handleRequest(req *proto.Request) bool {
 
 // respond - вспомогательный метод для передачи ответа с указанным статусом
 // и данными. Данные могут быть пустыми (data == nil).
-func (client *Client) respond(status string, data interface{}) {
+func (client *StatelessClient) respond(status string, data interface{}) {
 	var raw json.RawMessage
 	raw, _ = json.Marshal(data)
 	client.enc.Encode(&proto.Response{status, &raw})
@@ -190,7 +155,7 @@ func main() {
 					log.Info("accepted connection", "address", conn.RemoteAddr().String())
 
 					// Запуск go-программы для обслуживания клиентов.
-					go NewClient(conn).serve()
+					go NewClient(conn).handle()
 				}
 			}
 		}
