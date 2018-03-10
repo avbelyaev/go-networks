@@ -12,14 +12,27 @@ const INDEX_HTML = `
     <html lang="ru">
         <head>
             <meta charset="utf-8">
-            <title>Афиша</title>
+            <title>Рамблер новости</title>
+			<style>
+				body {
+					text-align: center;
+				}
+				h {
+					font-size: 24px;
+				}
+				a {
+					text-decoration: none;
+					font-family: "Comic Sans MS", "Comic Sans", cursive;
+					font-size: 18px;
+				}
+  			</style>
         </head>
         <body>
-			<h style="font-size:24px;" >Афиша</h>
+			<h>Рамблер новости</h>
 			<br/>
             {{if .}}
                 {{range .}}
-                    <a style="color:red; font-size:18px;" href="{{.Ref}}">{{.Title}}</a>
+                    <a href="{{.Ref}}">{{.Title}}</a>
                     <br/>
                 {{end}}
             {{else}}
@@ -30,9 +43,9 @@ const INDEX_HTML = `
     `
 
 /*
-Var 11
-Формирование списка фильмов с
-www.afisha.ru/msk/cinema
+Var 16
+Формирование списка статей с
+news.rambler.ru/articles
  */
 
 

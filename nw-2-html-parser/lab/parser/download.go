@@ -31,7 +31,9 @@ func isElem(node *html.Node, tag string) bool {
 }
 
 func isElemOfClass(node *html.Node, className string) bool {
-	return node != nil && node.Type == html.ElementNode && strings.Contains(getAttr(node, "class"), className)
+	elemClass := getAttr(node, "class")
+	splitted := strings.Split(elemClass, " ")
+	return node != nil && node.Type == html.ElementNode && contains(splitted, className)
 }
 
 func isText(node *html.Node) bool {
@@ -50,6 +52,14 @@ type Item struct {
 	Ref, Time, Title string
 }
 
+func contains(s []string, e string) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
+}
 
 func getElementsByClassName(node *html.Node, className string) []*html.Node {
 	var nodes []*html.Node
@@ -78,23 +88,33 @@ func getInnerHTML(stringToSearchWithin string) string {
 	return stringToSearchWithin[leftIndex + 1 : rightIndex]
 }
 
-func search(node *html.Node) []*Item {
-	var movieNodes = getElementsByClassName(node, "fn permalink")
-	var movies []*Item
-	for _, movieNode := range movieNodes {
-
-		var movie Item
-		movie.Ref = getAttr(movieNode, "href")
-
-		nodeAsString := nodeToString(movieNode)
-		movie.Title = getInnerHTML(nodeAsString)
-
-		movies = append(movies, &movie)
+func cleanTitle(title string) string {
+	rightIndex := strings.Index(title, "<")
+	if -1 != rightIndex {
+		return title[:rightIndex]
 	}
-	return movies
+	return title
 }
 
-const TARGET_URL = "https://www.afisha.ru/msk/cinema/"
+func search(node *html.Node) []*Item {
+	var articleNodes = getElementsByClassName(node, "format-card__text")
+	var items []*Item
+	for _, articleNode := range articleNodes {
+
+		var article Item
+		article.Ref = "https://news.rambler.ru" + getAttr(articleNode, "href")
+
+		titles := getElementsByClassName(articleNode, "format-card__title")
+		nodeAsString := nodeToString(titles[0])
+		innerHTML := getInnerHTML(nodeAsString)
+		article.Title = cleanTitle(innerHTML)
+
+		items = append(items, &article)
+	}
+	return items
+}
+
+const TARGET_URL = "https://news.rambler.ru/articles/"
 
 
 func downloadNews() []*Item {
