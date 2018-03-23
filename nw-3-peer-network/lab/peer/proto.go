@@ -4,6 +4,9 @@ import "encoding/json"
 
 const CMD_CONNECT = "connect"
 const CMD_DISCONNECT = "disconnect"
+const CMD_QUIT = "quit"
+const CMD_MSG = "message"
+
 
 type Request struct {
 	// Поле Command может принимать значения:
@@ -15,3 +18,4 @@ type Request struct {
 	// Если Command == "quit", то поле Data пустое
 	Data *json.RawMessage `json:"data"`
 }
+
