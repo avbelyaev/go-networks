@@ -19,7 +19,8 @@ import (
 	//"time"
 	"time"
 	"golang.org/x/crypto/openpgp/errors"
-	"strconv"
+	//"strconv"
+	//"golang.org/x/text/message"
 )
 
 type Client struct {
@@ -35,11 +36,12 @@ type Server struct {
 }
 
 type Peer struct {
-	logger 	log.Logger
-	client 	Client
-	server 	Server
-	lock	sync.Mutex
-	enabled	bool
+	logger 		log.Logger
+	client 		Client
+	server 		Server
+	lock		sync.Mutex
+	enabled		bool
+	messages	map[string]bool	// we only care about keys in this map
 }
 
 
@@ -48,24 +50,18 @@ func newPeer() *Peer {
 	return &Peer{
 		logger: 	log.New("peer"),
 		enabled:	true,
+		messages:	make(map[string]bool),
 	}
 }
 
+func (peer *Peer) saveMessageIdIfNotExists(id string) bool {
+	var idAlreadyExists, _ = peer.messages[id]
+	if !idAlreadyExists {
+		peer.messages[id] = true
+		return true
 
-// setup client for peer
-func (peer *Peer) setupConnForClientPart(conn *net.TCPConn) {
-	peer.client = Client{
-		conn: conn,
-		enc:  json.NewEncoder(conn),
-	}
-}
-
-
-// setup server for peer
-func (peer *Peer) setupConnForServerPart(conn *net.TCPConn) {
-	peer.server = Server{
-		conn: conn,
-		enc:  json.NewEncoder(conn),
+	} else {
+		return false
 	}
 }
 
@@ -98,7 +94,6 @@ func (peer *Peer) startClient(serverAddr string) {
 	handleErr(err)
 
 	logC("connecting [", outConn.LocalAddr().String(), " -> ", outConn.RemoteAddr().String(), "]")
-	peer.setupConnForClientPart(outConn)
 	peer.interact(outConn)
 }
 
@@ -114,15 +109,14 @@ func connectToServerWithinTimeout(serverAddr string, retryTimeoutSeconds int) (*
 
 		var conn, err = net.DialTCP("tcp", nil, addr)
 		if nil != err {
-			logC("could not connect to ", serverAddr,
-				". retry ", strconv.Itoa(i + 1), " of ", strconv.Itoa(retryTimeoutSeconds))
+			logC("could not connect to ", serverAddr, ". retry ", i + 1, " of ", retryTimeoutSeconds)
 
 		} else {
 			return conn, nil
 		}
 		i++
 	}
-	return nil, errors.InvalidArgumentError("could not connect to server. probably invalid addr")
+	return nil, errors.InvalidArgumentError("could not connect to server. probably incorrect addr")
 }
 
 
@@ -131,6 +125,8 @@ func (peer *Peer) interact(conn *net.TCPConn) {
 
 	defer conn.Close()
 	var encoder, decoder = json.NewEncoder(conn), json.NewDecoder(conn)
+	peer.client.enc = encoder
+
 	for {
 		fmt.Printf("command = ")
 		var rq = input.Gets()
@@ -146,7 +142,10 @@ func (peer *Peer) interact(conn *net.TCPConn) {
 		case CMD_MSG:
 			fmt.Printf("Type your message: ")
 			var msgText = input.Gets()
-			sendMessage(encoder, CMD_MSG, msgText)
+			var msg = newMessage(CMD_MSG, msgText)
+			peer.saveMessageIdIfNotExists(msg.Id)
+			resendMessage(encoder, msg)
+			continue
 
 		default:
 			logC("unknown command")
@@ -203,7 +202,7 @@ func (peer *Peer) handleIncomingConnection(conn *net.TCPConn) {
 
 
 // if request can be decoded, server handles its content with this function
-func (peer *Peer) handleRequestMessageWithExitFlag(rq *Message, conn *net.TCPConn) bool {
+func (peer *Peer) handleRequestMessageWithExitFlag(msg *Message, conn *net.TCPConn) bool {
 	defer func() {
 		logS("unlocking peer")
 		peer.lock.Unlock()
@@ -211,10 +210,10 @@ func (peer *Peer) handleRequestMessageWithExitFlag(rq *Message, conn *net.TCPCon
 
 	logS("locking on peer")
 	peer.lock.Lock()
-	logS("handling message with command '", rq.Command, "'")
+	logS("handling message with command '", msg.Command, "'")
 
 	var encoder = json.NewEncoder(conn)
-	switch rq.Command {
+	switch msg.Command {
 	case CMD_CONNECT:
 		logS("smb has connected. responding")
 		sendMessage(encoder, CMD_OK, nil)
@@ -223,29 +222,35 @@ func (peer *Peer) handleRequestMessageWithExitFlag(rq *Message, conn *net.TCPCon
 		logS("peer's server can be shut down only by peer's client")
 
 	case CMD_MSG:
-		if nil == rq.Payload {
+		if nil == msg.Payload {
 			logS("empty data")
 
 		} else {
-			var payload string
-			var err = json.Unmarshal(*rq.Payload, &payload)
-			handleErr(err)
-
-			logS("payload: ", payload)
+			peer.tryDisplayAndForwardMessage(msg)
 		}
-		sendMessage(encoder, CMD_OK, nil)
 
 	default:
-		logS("server has received command '", rq.Command, "'!")
+		logS("server has received command '", msg.Command, "'!")
 	}
 	return false
 }
 
 
-func sendMessage(encoder *json.Encoder, command string, data interface{}) {
-	var raw json.RawMessage
-	raw, _ = json.Marshal(data)
-	encoder.Encode(Message{command, &raw})
+// if we do not have this message then display it, save and forward to next peer
+func (peer *Peer) tryDisplayAndForwardMessage(message *Message) {
+	if peer.saveMessageIdIfNotExists(message.Id) {
+
+		var payload string
+		var err = json.Unmarshal(*message.Payload, &payload)
+		handleErr(err)
+
+		logS("payload: ", payload)
+
+		// forward it to next peer
+		logS("forwarding message")
+		time.Sleep(1 * time.Second)
+		resendMessage(peer.client.enc, message)
+	}
 }
 
 
@@ -270,13 +275,13 @@ func handleErr(e error) {
 	}
 }
 
-func logS(args ...string)  {
+func logS(args ...interface{})  {
 	print("Server: ")
 	fmt.Print(args)
 	println()
 }
 
-func logC(args ...string)  {
+func logC(args ...interface{})  {
 	print("-Client: ")
 	fmt.Print(args)
 	println()
