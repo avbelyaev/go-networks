@@ -6,9 +6,10 @@ const CMD_CONNECT = "connect"
 const CMD_DISCONNECT = "disconnect"
 const CMD_QUIT = "quit"
 const CMD_MSG = "message"
+const CMD_OK = "ok"
 
 
-type Request struct {
+type Message struct {
 	// Поле Command может принимать значения:
 	// quit - прощание с сервером (после этого сервер рвёт соединение);
 	// count - добавление точки к кривой;
