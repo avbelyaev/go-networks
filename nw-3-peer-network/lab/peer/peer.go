@@ -18,6 +18,8 @@ import (
 	"github.com/skorobogatov/input"
 	//"time"
 	"time"
+	"golang.org/x/crypto/openpgp/errors"
+	"strconv"
 )
 
 type Client struct {
@@ -92,18 +94,36 @@ func (peer *Peer) stopServer()  {
 }
 
 
-func (peer *Peer) startClient(nextAddr string) {
-	addr, err := net.ResolveTCPAddr("tcp", nextAddr)
-	handleErr(err)
-
-	// wait for server to start properly
-	time.Sleep(1 * time.Second)
-	outConn, err := net.DialTCP("tcp", nil, addr)
+func (peer *Peer) startClient(serverAddr string) {
+	var outConn, err = connectToServerWithinTimeout(serverAddr, 5)
 	handleErr(err)
 
 	logC("connecting [", outConn.LocalAddr().String(), " -> ", outConn.RemoteAddr().String(), "]")
 	peer.setupConnForClientPart(outConn)
 	peer.interact(outConn)
+}
+
+
+func connectToServerWithinTimeout(serverAddr string, retryTimeoutSeconds int) (*net.TCPConn, error) {
+	var addr, err = net.ResolveTCPAddr("tcp", serverAddr)
+	handleErr(err)
+
+	var i = 0
+	for i < retryTimeoutSeconds {
+		// wait for server to start properly
+		time.Sleep(1 * time.Second)
+
+		var conn, err = net.DialTCP("tcp", nil, addr)
+		if nil != err {
+			logC("could not connect to ", serverAddr,
+				". retry ", strconv.Itoa(i + 1), " of ", strconv.Itoa(retryTimeoutSeconds))
+
+		} else {
+			return conn, nil
+		}
+		i++
+	}
+	return nil, errors.InvalidArgumentError("could not connect to server. probably invalid addr")
 }
 
 
@@ -213,14 +233,15 @@ func sendMessage(encoder *json.Encoder, command string, data interface{}) {
 
 
 func main() {
-	// Работа с командной строкой, в которой может указываться необязательный ключ -addr.
-	var addrStr string
-	flag.StringVar(&addrStr, "addr", "127.0.0.1:6002", "specify ip address and port")
+	var testAddr = "127.0.0.1:6001"
+	var selfAddr, nextAddr string
+	flag.StringVar(&selfAddr, "self", testAddr, "specify self ip-addr:port")
+	flag.StringVar(&nextAddr, "next", testAddr, "specify next ip-addr:port")
 	flag.Parse()
 
 	peer := newPeer()
-	go peer.startServer("127.0.0.1:6001")
-	peer.startClient("127.0.0.1:6001")
+	go peer.startServer(selfAddr)
+	peer.startClient(nextAddr)
 }
 
 
