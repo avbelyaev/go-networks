@@ -4,7 +4,7 @@ import "encoding/json"
 
 const CMD_CONNECT = "c"
 const CMD_DISCONNECT = "d"
-const CMD_QUIT = "q"
+const CMD_STOP = "q"
 const CMD_MSG = "m"
 const CMD_OK = "ok"
 

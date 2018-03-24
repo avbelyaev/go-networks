@@ -17,6 +17,7 @@ import (
 	//"time"
 	"github.com/skorobogatov/input"
 	//"time"
+	"time"
 )
 
 type Client struct {
@@ -35,15 +36,16 @@ type Peer struct {
 	logger 	log.Logger
 	client 	Client
 	server 	Server
-	wg		sync.WaitGroup
 	lock	sync.Mutex
+	enabled	bool
 }
 
 
 // create peer object
 func newPeer() *Peer {
 	return &Peer{
-		logger: log.New("peer"),
+		logger: 	log.New("peer"),
+		enabled:	true,
 	}
 }
 
@@ -68,21 +70,25 @@ func (peer *Peer) setupConnForServerPart(conn *net.TCPConn) {
 
 // start listening to incoming tcp connections
 func (peer *Peer) startServer(selfAddr string) {
-	defer peer.wg.Done()
 	addr, err := net.ResolveTCPAddr("tcp", selfAddr)
 	handleErr(err)
 
 	listener, err := net.ListenTCP("tcp", addr)
 	handleErr(err)
-	println("listening at ", listener.Addr().String())
-	for {
+	logS("listening at ", listener.Addr().String())
+
+	for peer.enabled {
 		inConn, err := listener.AcceptTCP()
 		handleErr(err)
 
-		//peer.setupConnForServerPart(inConn)
-		peer.wg.Add(1)
+		//peer.wg.Add(1)
 		go peer.handleIncomingConnection(inConn)
 	}
+}
+
+func (peer *Peer) stopServer()  {
+	logS("shutting down server")
+	peer.enabled = false
 }
 
 
@@ -90,34 +96,36 @@ func (peer *Peer) startClient(nextAddr string) {
 	addr, err := net.ResolveTCPAddr("tcp", nextAddr)
 	handleErr(err)
 
+	// wait for server to start properly
+	time.Sleep(1 * time.Second)
 	outConn, err := net.DialTCP("tcp", nil, addr)
 	handleErr(err)
 
-	println("connecting [", outConn.LocalAddr().String(), " -> ", outConn.RemoteAddr().String(), "]")
+	logC("connecting [", outConn.LocalAddr().String(), " -> ", outConn.RemoteAddr().String(), "]")
 	peer.setupConnForClientPart(outConn)
 	peer.interact(outConn)
 }
 
 
 func (peer *Peer) interact(conn *net.TCPConn) {
-	println("interact")
+	logC("interacting")
 
 	defer conn.Close()
-	encoder, decoder := json.NewEncoder(conn), json.NewDecoder(conn)
+	var encoder, decoder = json.NewEncoder(conn), json.NewDecoder(conn)
 	for {
 		fmt.Printf("command = ")
-		rq := input.Gets()
+		var rq = input.Gets()
 
 		switch rq {
 		case CMD_CONNECT:
 			sendMessage(encoder, CMD_CONNECT, nil)
 
-		case CMD_QUIT:
-			sendMessage(encoder, CMD_QUIT, nil)
+		case CMD_STOP:
+			peer.stopServer()
 			return
 
 		default:
-			fmt.Printf("error: unknown command\n")
+			logC("unknown command")
 			continue
 		}
 
@@ -127,14 +135,24 @@ func (peer *Peer) interact(conn *net.TCPConn) {
 			fmt.Printf("error: %v\n", err)
 			break
 		}
-		println("response has been decoded")
+		logC("response has been decoded")
 
 		switch rsp.Command {
 		case CMD_OK:
-			println("response ok has been received")
+			logC("response with command ok has been received")
+			if nil == rsp.Data {
+				logC("empty response data")
+
+			} else {
+				var responseFromServer string
+				var err = json.Unmarshal(*rsp.Data, &responseFromServer)
+				handleErr(err)
+
+				logC("response data: ", responseFromServer)
+			}
 
 		default:
-			fmt.Printf("error: server reports unknown command %q\n", rsp.Command)
+			logC("unknown command ", rsp.Command)
 		}
 	}
 }
@@ -143,18 +161,17 @@ func (peer *Peer) interact(conn *net.TCPConn) {
 // on each incoming tcp connection to server call this function in goroutine
 func (peer *Peer) handleIncomingConnection(conn *net.TCPConn) {
 	defer conn.Close()
-	defer peer.wg.Done()
 
-	println("handling connection [", conn.LocalAddr().String(), " <- ",
+	logS("handling connection [", conn.LocalAddr().String(), " <- ",
 		conn.RemoteAddr().String(), "]")
-	decoder := json.NewDecoder(conn)
+	var decoder = json.NewDecoder(conn)
 	// listen for messages in connection
 	for {
 		var rq Message
 		err := decoder.Decode(&rq)
 		handleErr(err)
 
-		if peer.handleRequestMessageAndExit(&rq, conn) {
+		if peer.handleRequestMessageWithExitFlag(&rq, conn) {
 			break
 		}
 	}
@@ -162,31 +179,27 @@ func (peer *Peer) handleIncomingConnection(conn *net.TCPConn) {
 
 
 // if request can be decoded, server handles its content with this function
-func (peer *Peer) handleRequestMessageAndExit(rq *Message, conn *net.TCPConn) bool {
+func (peer *Peer) handleRequestMessageWithExitFlag(rq *Message, conn *net.TCPConn) bool {
 	defer func() {
-		println("unlocking peer")
+		logS("unlocking peer")
 		peer.lock.Unlock()
 	}()
 
-	println("locking on peer")
+	logS("locking on peer")
 	peer.lock.Lock()
-	println("handling message with command '", rq.Command, "'")
+	logS("handling message with command '", rq.Command, "'")
 
 	var encoder = json.NewEncoder(conn)
 	switch rq.Command {
 	case CMD_CONNECT:
-		println("smb has connected")
-		sendMessage(encoder, CMD_OK, &Message{
-			Command: "fuck you!",
-			Data:    nil,
-		})
+		logS("smb has connected. responding")
+		sendMessage(encoder, CMD_OK, "Fuck you!")
 
-	case CMD_QUIT:
-		print("quit")
-		return true
+	case CMD_STOP:
+		logS("peer's server can be shut down only by peer's client")
 
 	default:
-		println("server has received command '", rq.Command, "'!")
+		logS("server has received command '", rq.Command, "'!")
 	}
 	return false
 }
@@ -206,12 +219,8 @@ func main() {
 	flag.Parse()
 
 	peer := newPeer()
-	peer.wg.Add(1)
 	go peer.startServer("127.0.0.1:6001")
 	peer.startClient("127.0.0.1:6001")
-
-	println("waiting to finish")
-	peer.wg.Wait()
 }
 
 
@@ -221,4 +230,16 @@ func handleErr(e error) {
 		println(e)
 		os.Exit(1)
 	}
+}
+
+func logS(args ...string)  {
+	print("Server: ")
+	fmt.Print(args)
+	println()
+}
+
+func logC(args ...string)  {
+	print("-Client: ")
+	fmt.Print(args)
+	println()
 }
