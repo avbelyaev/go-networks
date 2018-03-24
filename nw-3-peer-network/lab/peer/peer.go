@@ -280,7 +280,13 @@ func handleErr(e error) {
 
 func pickRandomName() string {
 	rand.Seed(time.Now().Unix())
-	var max = 999
-	var min = 111
-	return "Stranger_" + strconv.Itoa(rand.Intn(max - min) + min)
+	var names = []string{
+		"Asuna",
+		"Lightning",
+		"Yuuki",
+		"Kirito",
+		"Beater",
+		"Black swordsman",
+	}
+	return names[rand.Intn(len(names))]
 }
