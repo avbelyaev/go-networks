@@ -83,7 +83,6 @@ func (peer *Peer) startServer(selfAddr string) {
 		inConn, err := listener.AcceptTCP()
 		handleErr(err)
 
-		//peer.wg.Add(1)
 		go peer.handleIncomingConnection(inConn)
 	}
 }
@@ -140,9 +139,14 @@ func (peer *Peer) interact(conn *net.TCPConn) {
 		case CMD_CONNECT:
 			sendMessage(encoder, CMD_CONNECT, nil)
 
-		case CMD_STOP:
+		case CMD_QUIT:
 			peer.stopServer()
 			return
+
+		case CMD_MSG:
+			fmt.Printf("Type your message: ")
+			var msgText = input.Gets()
+			sendMessage(encoder, CMD_MSG, msgText)
 
 		default:
 			logC("unknown command")
@@ -160,12 +164,12 @@ func (peer *Peer) interact(conn *net.TCPConn) {
 		switch rsp.Command {
 		case CMD_OK:
 			logC("response with command ok has been received")
-			if nil == rsp.Data {
+			if nil == rsp.Payload {
 				logC("empty response data")
 
 			} else {
 				var responseFromServer string
-				var err = json.Unmarshal(*rsp.Data, &responseFromServer)
+				var err = json.Unmarshal(*rsp.Payload, &responseFromServer)
 				handleErr(err)
 
 				logC("response data: ", responseFromServer)
@@ -213,10 +217,23 @@ func (peer *Peer) handleRequestMessageWithExitFlag(rq *Message, conn *net.TCPCon
 	switch rq.Command {
 	case CMD_CONNECT:
 		logS("smb has connected. responding")
-		sendMessage(encoder, CMD_OK, "Fuck you!")
+		sendMessage(encoder, CMD_OK, nil)
 
-	case CMD_STOP:
+	case CMD_QUIT:
 		logS("peer's server can be shut down only by peer's client")
+
+	case CMD_MSG:
+		if nil == rq.Payload {
+			logS("empty data")
+
+		} else {
+			var payload string
+			var err = json.Unmarshal(*rq.Payload, &payload)
+			handleErr(err)
+
+			logS("payload: ", payload)
+		}
+		sendMessage(encoder, CMD_OK, nil)
 
 	default:
 		logS("server has received command '", rq.Command, "'!")
