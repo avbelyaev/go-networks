@@ -32,10 +32,11 @@ type Server struct {
 }
 
 type Peer struct {
-	logger 	log.Logger // Объект для печати логов
+	logger 	log.Logger
 	client 	Client
 	server 	Server
 	wg		sync.WaitGroup
+	lock	sync.Mutex
 }
 
 
@@ -78,9 +79,9 @@ func (peer *Peer) startServer(selfAddr string) {
 		inConn, err := listener.AcceptTCP()
 		handleErr(err)
 
-		peer.setupConnForServerPart(inConn)
+		//peer.setupConnForServerPart(inConn)
 		peer.wg.Add(1)
-		go peer.handleIncomingConnection()
+		go peer.handleIncomingConnection(inConn)
 	}
 }
 
@@ -130,7 +131,7 @@ func (peer *Peer) interact(conn *net.TCPConn) {
 
 		switch rsp.Command {
 		case CMD_OK:
-			print("ok")
+			println("response ok has been received")
 
 		default:
 			fmt.Printf("error: server reports unknown command %q\n", rsp.Command)
@@ -140,42 +141,42 @@ func (peer *Peer) interact(conn *net.TCPConn) {
 
 
 // on each incoming tcp connection to server call this function in goroutine
-func (peer *Peer) handleIncomingConnection() {
-	defer peer.server.conn.Close()
+func (peer *Peer) handleIncomingConnection(conn *net.TCPConn) {
+	defer conn.Close()
 	defer peer.wg.Done()
 
-	println("handling connection [", peer.server.conn.LocalAddr().String(), " <- ",
-		peer.server.conn.RemoteAddr().String(), "]")
-	decoder := json.NewDecoder(peer.server.conn)
+	println("handling connection [", conn.LocalAddr().String(), " <- ",
+		conn.RemoteAddr().String(), "]")
+	decoder := json.NewDecoder(conn)
 	// listen for messages in connection
 	for {
 		var rq Message
 		err := decoder.Decode(&rq)
 		handleErr(err)
 
-		if peer.handleRequestMessage(&rq) {
+		if peer.handleRequestMessageAndExit(&rq, conn) {
 			break
 		}
-		//if err := decoder.Decode(&rq); err != nil {
-		//	peer.logger.Error("cannot decode message")
-		//	break
-		//
-		//} else {
-		//	peer.logger.Info("received command", rq.Command)
-		//
-		//}
 	}
 }
 
 
 // if request can be decoded, server handles its content with this function
-func (peer *Peer) handleRequestMessage(rq *Message) bool {
-	println("handling message with command ", rq.Command)
+func (peer *Peer) handleRequestMessageAndExit(rq *Message, conn *net.TCPConn) bool {
+	defer func() {
+		println("unlocking peer")
+		peer.lock.Unlock()
+	}()
 
+	println("locking on peer")
+	peer.lock.Lock()
+	println("handling message with command '", rq.Command, "'")
+
+	var encoder = json.NewEncoder(conn)
 	switch rq.Command {
 	case CMD_CONNECT:
-		print("smb has connected")
-		sendMessage(peer.client.enc, CMD_OK, &Message{
+		println("smb has connected")
+		sendMessage(encoder, CMD_OK, &Message{
 			Command: "fuck you!",
 			Data:    nil,
 		})
@@ -185,7 +186,7 @@ func (peer *Peer) handleRequestMessage(rq *Message) bool {
 		return true
 
 	default:
-		print("default")
+		println("server has received command '", rq.Command, "'!")
 	}
 	return false
 }
@@ -207,7 +208,6 @@ func main() {
 	peer := newPeer()
 	peer.wg.Add(1)
 	go peer.startServer("127.0.0.1:6001")
-	//time.Sleep(3 * time.Second)
 	peer.startClient("127.0.0.1:6001")
 
 	println("waiting to finish")

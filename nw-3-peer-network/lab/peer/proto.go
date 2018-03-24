@@ -2,10 +2,10 @@ package main
 
 import "encoding/json"
 
-const CMD_CONNECT = "connect"
-const CMD_DISCONNECT = "disconnect"
-const CMD_QUIT = "quit"
-const CMD_MSG = "message"
+const CMD_CONNECT = "c"
+const CMD_DISCONNECT = "d"
+const CMD_QUIT = "q"
+const CMD_MSG = "m"
 const CMD_OK = "ok"
 
 
