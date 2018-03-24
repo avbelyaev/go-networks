@@ -5,55 +5,45 @@ import (
 	"github.com/mgutz/logxi/v1"
 	"net"
 	"encoding/json"
-	//"fmt"
-	//"strings"
-	//"strconv"
 	"os"
-	//"debug/pe"
 	"fmt"
-	//"github.com/skorobogatov/input"
-	"sync"
-	//"time"
-	//"time"
 	"github.com/skorobogatov/input"
-	//"time"
 	"time"
 	"golang.org/x/crypto/openpgp/errors"
-	//"strconv"
-	//"golang.org/x/text/message"
+	"math/rand"
+	"strconv"
 )
 
 type Client struct {
-	conn     *net.TCPConn
 	enc      *json.Encoder
-	nextAddr string
 }
 
 type Server struct {
-	conn     *net.TCPConn
-	enc      *json.Encoder
-	selfAddr string
+	enabled bool
 }
 
 type Peer struct {
-	logger 		log.Logger
-	client 		Client
-	server 		Server
-	lock		sync.Mutex
-	enabled		bool
-	messages	map[string]bool	// we only care about keys in this map
+	name			string
+	logger 			log.Logger
+	client 			Client
+	server			Server
+	//lock			sync.Mutex
+	messages		map[string]bool	// we only care about keys in this map
 }
 
 
 // create peer object
-func newPeer() *Peer {
+func newPeer(name string) *Peer {
 	return &Peer{
+		name:		name,
 		logger: 	log.New("peer"),
-		enabled:	true,
 		messages:	make(map[string]bool),
 	}
 }
 
+
+// save message if this message was forwarded to peer
+// if peer already contains message, ignore and return false
 func (peer *Peer) saveMessageIdIfNotExists(id string) bool {
 	var idAlreadyExists, _ = peer.messages[id]
 	if !idAlreadyExists {
@@ -66,6 +56,16 @@ func (peer *Peer) saveMessageIdIfNotExists(id string) bool {
 }
 
 
+// only stops receiving messages as server
+// sending messages to next (dead?) peer is still allowed (as client)
+func (peer *Peer) stopServer()  {
+	log.Info("Server is shutting down")
+	peer.server.enabled = false
+}
+
+
+// ================ Server ================
+
 // start listening to incoming tcp connections
 func (peer *Peer) startServer(selfAddr string) {
 	addr, err := net.ResolveTCPAddr("tcp", selfAddr)
@@ -73,110 +73,14 @@ func (peer *Peer) startServer(selfAddr string) {
 
 	listener, err := net.ListenTCP("tcp", addr)
 	handleErr(err)
-	logS("listening at ", listener.Addr().String())
+	log.Info(fmt.Sprintf("Server listening at %s", listener.Addr().String()))
 
-	for peer.enabled {
+	peer.server.enabled = true
+	for peer.server.enabled {
 		inConn, err := listener.AcceptTCP()
 		handleErr(err)
 
 		go peer.handleIncomingConnection(inConn)
-	}
-}
-
-func (peer *Peer) stopServer()  {
-	logS("shutting down server")
-	peer.enabled = false
-}
-
-
-func (peer *Peer) startClient(serverAddr string) {
-	var outConn, err = connectToServerWithinTimeout(serverAddr, 5)
-	handleErr(err)
-
-	logC("connecting [", outConn.LocalAddr().String(), " -> ", outConn.RemoteAddr().String(), "]")
-	peer.interact(outConn)
-}
-
-
-func connectToServerWithinTimeout(serverAddr string, retryTimeoutSeconds int) (*net.TCPConn, error) {
-	var addr, err = net.ResolveTCPAddr("tcp", serverAddr)
-	handleErr(err)
-
-	var i = 0
-	for i < retryTimeoutSeconds {
-		// wait for server to start properly
-		time.Sleep(1 * time.Second)
-
-		var conn, err = net.DialTCP("tcp", nil, addr)
-		if nil != err {
-			logC("could not connect to ", serverAddr, ". retry ", i + 1, " of ", retryTimeoutSeconds)
-
-		} else {
-			return conn, nil
-		}
-		i++
-	}
-	return nil, errors.InvalidArgumentError("could not connect to server. probably incorrect addr")
-}
-
-
-func (peer *Peer) interact(conn *net.TCPConn) {
-	logC("interacting")
-
-	defer conn.Close()
-	var encoder, decoder = json.NewEncoder(conn), json.NewDecoder(conn)
-	peer.client.enc = encoder
-
-	for {
-		fmt.Printf("command = ")
-		var rq = input.Gets()
-
-		switch rq {
-		case CMD_CONNECT:
-			sendMessage(encoder, CMD_CONNECT, nil)
-
-		case CMD_QUIT:
-			peer.stopServer()
-			return
-
-		case CMD_MSG:
-			fmt.Printf("Type your message: ")
-			var msgText = input.Gets()
-			var msg = newMessage(CMD_MSG, msgText)
-			peer.saveMessageIdIfNotExists(msg.Id)
-			resendMessage(encoder, msg)
-			continue
-
-		default:
-			logC("unknown command")
-			continue
-		}
-
-		// Получение ответа.
-		var rsp Message
-		if err := decoder.Decode(&rsp); err != nil {
-			fmt.Printf("error: %v\n", err)
-			break
-		}
-		logC("response has been decoded")
-
-		switch rsp.Command {
-		case CMD_OK:
-			logC("response with command ok has been received")
-			if nil == rsp.Payload {
-				logC("empty response data")
-
-			} else {
-				var responseFromServer string
-				var err = json.Unmarshal(*rsp.Payload, &responseFromServer)
-				handleErr(err)
-
-				logC("response data: ", responseFromServer)
-			}
-
-		default:
-			logC("unknown command ", rsp.Command)
-		}
 	}
 }
 
@@ -185,14 +89,16 @@ func (peer *Peer) interact(conn *net.TCPConn) {
 func (peer *Peer) handleIncomingConnection(conn *net.TCPConn) {
 	defer conn.Close()
 
-	logS("handling connection [", conn.LocalAddr().String(), " <- ",
-		conn.RemoteAddr().String(), "]")
+	log.Debug(fmt.Sprintf("Server handling connection (%s <- %s)", conn.LocalAddr().String(), conn.RemoteAddr().String()))
 	var decoder = json.NewDecoder(conn)
 	// listen for messages in connection
-	for {
+	for peer.server.enabled {
 		var rq Message
 		err := decoder.Decode(&rq)
-		handleErr(err)
+		if nil != err {
+			log.Error("Server could not decode message. Connection to peer probably lost")
+			peer.stopServer()
+		}
 
 		if peer.handleRequestMessageWithExitFlag(&rq, conn) {
 			break
@@ -202,35 +108,27 @@ func (peer *Peer) handleIncomingConnection(conn *net.TCPConn) {
 
 
 // if request can be decoded, server handles its content with this function
+// only returns false (returning true would close connection)
 func (peer *Peer) handleRequestMessageWithExitFlag(msg *Message, conn *net.TCPConn) bool {
-	defer func() {
-		logS("unlocking peer")
-		peer.lock.Unlock()
-	}()
+	//defer peer.lock.Unlock()
 
-	logS("locking on peer")
-	peer.lock.Lock()
-	logS("handling message with command '", msg.Command, "'")
+	//peer.lock.Lock()
+	log.Debug(fmt.Sprintf("Server handling message with command '%s'", msg.Command))
 
-	var encoder = json.NewEncoder(conn)
 	switch msg.Command {
-	case CMD_CONNECT:
-		logS("smb has connected. responding")
-		sendMessage(encoder, CMD_OK, nil)
-
-	case CMD_QUIT:
-		logS("peer's server can be shut down only by peer's client")
-
 	case CMD_MSG:
 		if nil == msg.Payload {
-			logS("empty data")
+			log.Debug("Server got empty data")
 
 		} else {
 			peer.tryDisplayAndForwardMessage(msg)
 		}
 
+	case CMD_EMPTY:
+		log.Debug("Server connection has been lost")
+
 	default:
-		logS("server has received command '", msg.Command, "'!")
+		log.Debug("Server has received command", msg.Command)
 	}
 	return false
 }
@@ -244,24 +142,129 @@ func (peer *Peer) tryDisplayAndForwardMessage(message *Message) {
 		var err = json.Unmarshal(*message.Payload, &payload)
 		handleErr(err)
 
-		logS("payload: ", payload)
+		log.Info("Incoming message ", message.Author, payload)
 
 		// forward it to next peer
-		logS("forwarding message")
+		log.Debug("Server forwarding message")
 		time.Sleep(1 * time.Second)
 		resendMessage(peer.client.enc, message)
 	}
 }
 
 
+// ================ Client ================
+
+func (peer *Peer) startClient(serverAddr string) {
+	var outConn, err = connectToServerWithinTimeout(serverAddr, 10)
+	handleErr(err)
+
+	log.Info(fmt.Sprintf("Clt opening connection (%s -> %s)", outConn.LocalAddr().String(), outConn.RemoteAddr().String()))
+	peer.interact(outConn)
+}
+
+
+// try acquire connection to server till period expires
+func connectToServerWithinTimeout(serverAddr string, retryTimeoutSeconds int) (*net.TCPConn, error) {
+	var addr, err = net.ResolveTCPAddr("tcp", serverAddr)
+	handleErr(err)
+
+	var i = 0
+	for i < retryTimeoutSeconds {
+		// wait for server to start properly
+		time.Sleep(1 * time.Second)
+
+		var conn, err = net.DialTCP("tcp", nil, addr)
+		if nil != err {
+			log.Debug(fmt.Sprintf("Clt could not connect to %s. retry %d of %d", serverAddr, i + 1, retryTimeoutSeconds))
+
+		} else {
+			return conn, nil
+		}
+		i++
+	}
+	return nil, errors.InvalidArgumentError("could not connect to server. probably incorrect addr")
+}
+
+
+// takes user input and sends messages upon it
+func (peer *Peer) interact(conn *net.TCPConn) {
+	defer conn.Close()
+
+	var encoder, decoder = json.NewEncoder(conn), json.NewDecoder(conn)
+	peer.client.enc = encoder
+
+	for {
+		fmt.Printf("command:\n")
+		var cmd = input.Gets()
+
+		switch cmd {
+		case CMD_QUIT:
+			peer.stopServer()
+			sendMessage(encoder, CMD_QUIT, nil, peer.name)
+			return
+
+		case CMD_MSG:
+			fmt.Printf("Type your message:\n")
+			var msgText = input.Gets()
+			var msg = newMessage(CMD_MSG, msgText, peer.name)
+			// save message to already known before sending it
+			peer.saveMessageIdIfNotExists(msg.Id)
+			resendMessage(encoder, msg)
+			continue
+
+		default:
+			log.Warn("Clt. Unknown command")
+			continue
+		}
+
+		// Получение ответа.
+		var rsp Message
+		if err := decoder.Decode(&rsp); err != nil {
+			fmt.Printf("error: %v\n", err)
+			break
+		}
+		log.Debug("Clt response has been decoded")
+
+
+		// FIXME following is probably dead code
+		switch rsp.Command {
+		case CMD_OK:
+			if nil == rsp.Payload {
+				log.Debug("Clt got empty payload")
+
+			} else {
+				var responseFromServer string
+				var err = json.Unmarshal(*rsp.Payload, &responseFromServer)
+				handleErr(err)
+
+				log.Info("Incoming Message ", rsp.Author, responseFromServer)
+			}
+
+		default:
+			log.Warn("Client got unknown command", rsp.Command)
+		}
+	}
+}
+
+
+
+// launch:
+//go run peer.go message.go -name kirito -self localhost:6001 -next localhost:6002
+//go run peer.go message.go -name asuna  -self localhost:6002 -next localhost:6001
+
+// usage:
+// m - message
+// q - quit
 func main() {
 	var testAddr = "127.0.0.1:6001"
-	var selfAddr, nextAddr string
+	var selfAddr, nextAddr, name string
+	flag.StringVar(&name, "name", pickRandomName(), "specify name for a chat")
 	flag.StringVar(&selfAddr, "self", testAddr, "specify self ip-addr:port")
 	flag.StringVar(&nextAddr, "next", testAddr, "specify next ip-addr:port")
 	flag.Parse()
 
-	peer := newPeer()
+
+	peer := newPeer(name)
 	go peer.startServer(selfAddr)
 	peer.startClient(nextAddr)
 }
@@ -275,14 +278,9 @@ func handleErr(e error) {
 	}
 }
 
-func logS(args ...interface{})  {
-	print("Server: ")
-	fmt.Print(args)
-	println()
-}
-
-func logC(args ...interface{})  {
-	print("-Client: ")
-	fmt.Print(args)
-	println()
+func pickRandomName() string {
+	rand.Seed(time.Now().Unix())
+	var max = 999
+	var min = 111
+	return "Stranger_" + strconv.Itoa(rand.Intn(max - min) + min)
 }

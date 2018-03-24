@@ -5,36 +5,36 @@ import (
 	"github.com/satori/go.uuid"
 )
 
-const CMD_CONNECT = "c"
-const CMD_DISCONNECT = "d"
 const CMD_QUIT = "q"
 const CMD_MSG = "m"
 const CMD_OK = "ok"
+const CMD_EMPTY = ""
 
 
 type Message struct {
-	// Поле Command может принимать значения:
-	// quit - прощание с сервером (после этого сервер рвёт соединение);
-	// count - добавление точки к кривой;
+	// id сообщения. нужен чтобы пир мог сказать, знает он это сообщение или нет
+	Id string `json:"id"`
+
+	// автор сообщения
+	Author string `json:"author"`
+
+	// команда
 	Command string `json:"command"`
 
-	// Если Command == "count", то в поле Data лежит Circle
-	// Если Command == "quit", то поле Data пустое
+	//полезная нагрузка сообщения (текст)
 	Payload *json.RawMessage `json:"data"`
-
-	// uuid сообщения
-	Id string `json:"id"`
 }
 
 
 // compose message with UUID
-func newMessage(command string, payload interface{}) *Message {
+func newMessage(command string, payload interface{}, author string) *Message {
 	var raw json.RawMessage
 	raw, _ = json.Marshal(payload)
 	// additionally provide uuid
 	// otherwise peer wont know if message that he has just received is his own (end of peer-ring)
 	// or from another peer (he should display it and forward to next peer)
 	return &Message{
+		Author: author,
 		Command: command,
 		Payload: &raw,
 		Id: uuid.Must(uuid.NewV4()).String(),
@@ -43,8 +43,8 @@ func newMessage(command string, payload interface{}) *Message {
 
 
 // compose message and send it
-func sendMessage(encoder *json.Encoder, command string, payload interface{}) {
-	var msg = newMessage(command, payload)
+func sendMessage(encoder *json.Encoder, command string, payload interface{}, author string) {
+	var msg = newMessage(command, payload, author)
 	resendMessage(encoder, msg)
 }
 
