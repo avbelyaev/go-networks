@@ -11,7 +11,6 @@ import (
 	"time"
 	"golang.org/x/crypto/openpgp/errors"
 	"math/rand"
-	"strconv"
 )
 
 type Client struct {
@@ -96,7 +95,7 @@ func (peer *Peer) handleIncomingConnection(conn *net.TCPConn) {
 		var rq Message
 		err := decoder.Decode(&rq)
 		if nil != err {
-			log.Error("Server could not decode message. Connection to peer probably lost")
+			log.Debug("Connection to prev. peer probably lost")
 			peer.stopServer()
 		}
 
@@ -125,7 +124,12 @@ func (peer *Peer) handleRequestMessageWithExitFlag(msg *Message, conn *net.TCPCo
 		}
 
 	case CMD_EMPTY:
-		log.Debug("Server connection has been lost")
+		log.Debug("Server. Connection with prev. peer has been lost")
+
+	case CMD_QUIT:
+		log.Info("", fmt.Sprintf("User %s has left", msg.Author))
+		// notify next peer that user has left
+		sendMessage(peer.client.enc, CMD_QUIT, nil, msg.Author)
 
 	default:
 		log.Debug("Server has received command", msg.Command)
