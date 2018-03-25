@@ -1,4 +1,25 @@
+## Цель работы
+Целью данной работы является разработка одноранговой сетевой службы.
 
+## Задание
+Основные требования к сетевой службе:
+1. в качестве формата сообщений для протокола взаимодействия пиров нужно использо-
+вать JSON;
+2. полная проверка данных, получаемых из сети;
+3. устойчивость к обрыву соединения;
+4. ведение подробного лога всех ошибок, а также других важных событий (установка и
+завершение соединения с соседним пиром, приём и передача сообщений, и т.п.).
+
+## Вариант 1. Чат (кольцо)
+- Топология: кольцевой список.
+- Информация, известная пиру при запуске: его IP-адрес и порт, а
+также IP-адрес и порт следующего пира в кольцевом списке
+(следующий пир не обязан быть заранее запущен).
+- Описание службы: каждый пир имеет графический
+пользовательский интерфейс (или web-интерфейс), через который
+осуществляется просмотр и передача сообщений в чате.
+
+## Пример работы
 
 ### Peer 1 (bobby) `/p1.sh`
 ```
@@ -14,13 +35,10 @@ command:
 15:58:55.544829 DBG ~ Server handling connection (127.0.0.1:6001 <- 127.0.0.1:59793)
 15:59:17.514110 INF ~ Incoming message
    donald: hello there
-15:59:17.514199 DBG ~ Server forwarding message
 15:59:27.671380 INF ~ Incoming message
    donald: how r u
-15:59:27.671430 DBG ~ Server forwarding message
 15:59:40.898398 INF ~ Incoming message
    eddy: fine thx
-15:59:40.898452 DBG ~ Server forwarding message
 m
 Type your message:
 fck that im leaving
@@ -53,15 +71,11 @@ how r u
 command:
 15:59:41.903150 INF ~ Incoming message
    eddy: fine thx
-15:59:41.903219 DBG ~ Server forwarding message
 15:59:53.133607 INF ~ Incoming message
    bobby: fck that im leaving
-15:59:53.133664 DBG ~ Server forwarding message
 15:59:56.692620 INF ~
    _: User bobby has left
 15:59:56.692833 DBG ~ Connection to prev. peer probably lost
-15:59:56.692902 INF ~ Server is shutting down
-15:59:56.693001 DBG ~ Server. Connection with prev. peer has been lost
 m
 Type your message:
 see ya
@@ -80,27 +94,21 @@ Starting peer 3 (6003 -> 6001)
 command:
 15:59:16.508106 INF ~ Incoming message
    donald: hello there
-15:59:16.508183 DBG ~ Server forwarding message
 15:59:26.667360 INF ~ Incoming message
    donald: how r u
-15:59:26.667407 DBG ~ Server forwarding message
 m
 Type your message:
 fine thx
 command:
 15:59:54.138392 INF ~ Incoming message
    bobby: fck that im leaving
-15:59:54.138437 DBG ~ Server forwarding message
 15:59:56.693346 INF ~
    _: User bobby has left
 16:00:17.676548 INF ~ Incoming message
    donald: see ya
-16:00:17.676600 DBG ~ Server forwarding message
 16:00:21.805643 INF ~
    _: User donald has left
 16:00:21.805747 DBG ~ Connection to prev. peer probably lost
-16:00:21.805870 INF ~ Server is shutting down
-16:00:21.806000 DBG ~ Server. Connection with prev. peer has been lost
 q
 16:00:26.055126 INF ~ Server is shutting down
 ```
