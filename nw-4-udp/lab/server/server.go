@@ -23,39 +23,20 @@ SYN ACK зашить в rq/rsp
 //
 
 type StatelessClient struct {
-	logger log.Logger    // Объект для печати логов
-	conn   *net.UDPConn  // Объект TCP-соединения
-	enc    *json.Encoder // Объект для кодирования и отправки сообщений
+	logger 	log.Logger    // Объект для печати логов
+	conn   	*net.UDPConn  // Объект TCP-соединения
+	addr 	*net.UDPAddr
 }
 
-// NewClient - конструктор клиента, принимает в качестве параметра
-// объект TCP-соединения.
-func NewClient(conn *net.UDPConn) *StatelessClient {
+
+func NewClient(conn *net.UDPConn, addr *net.UDPAddr) *StatelessClient {
 	return &StatelessClient{
-		conn:   conn,
-		enc:    json.NewEncoder(conn),
+		conn:   	conn,
+		addr:		addr,
+		logger:		log.New(fmt.Sprintf("Client %s", addr)),
 	}
 }
 
-// handle - метод, в котором реализован цикл взаимодействия с клиентом.
-// Подразумевается, что метод handle будет вызаваться в отдельной go-программе.
-func (client *StatelessClient) handle() {
-	defer client.conn.Close()
-	decoder := json.NewDecoder(client.conn)
-	for {
-		var req proto.Message
-		if err := decoder.Decode(&req); err != nil {
-			client.logger.Error("cannot decode message")
-			break
-		} else {
-			client.logger.Info("received command", "command", req.Command)
-			if client.handleRequest(&req) {
-				client.logger.Info("shutting down connection")
-				break
-			}
-		}
-	}
-}
 
 func countSquareDifference(coord1 string, coord2 string) (float64, error) {
 	circleCenterX, err := strconv.ParseFloat(string(coord1), 64)
@@ -84,13 +65,13 @@ func countCircleSquare(circle proto.Circle) (float64, error) {
 	return math.Pi * radius * radius, nil
 }
 
-// handleRequest - метод обработки запроса от клиента. Он возвращает true,
-// если клиент передал команду "quit" и хочет завершить общение.
-func (client *StatelessClient) handleRequest(req *proto.Message) bool {
+
+func (client *StatelessClient) handleRequest(req *proto.Message) {
+	var message *proto.Message
+
 	switch req.Command {
 	case proto.CMD_QUIT:
-		client.respond(proto.CMD_OK, nil)
-		return true
+		message = proto.NewMessage(proto.CMD_OK, nil)
 
 	case proto.CMD_COUNT:
 		errorMsg := ""
@@ -110,30 +91,34 @@ func (client *StatelessClient) handleRequest(req *proto.Message) bool {
 					circleSquareAsString := strconv.FormatFloat(circleSquare, 'f', 6, 64)
 					client.logger.Info("square of circle has been counted", "value", circleSquareAsString)
 
-					client.respond(proto.CMD_SUCCESS, circleSquareAsString)
+					message = proto.NewMessage(proto.CMD_SUCCESS, circleSquareAsString)
 				}
 			}
 		}
 		if errorMsg == "" {
-			client.respond(proto.CMD_OK, nil)
+			//message = proto.NewMessage(proto.CMD_OK, nil)
 
 		} else {
 			client.logger.Error("count failed", "reason", errorMsg)
-			client.respond(proto.CMD_FAIL, errorMsg)
+			message = proto.NewMessage(proto.CMD_FAIL, errorMsg)
 		}
 
 	default:
 		client.logger.Error("unknown command")
-		client.respond("failed", "unknown command")
+		message = proto.NewMessage(proto.CMD_UNKNOWN, "unknown command")
 	}
-	return false
+
+	client.respond(message)
 }
 
-// respond - вспомогательный метод для передачи ответа с указанным статусом
-// и данными. Данные могут быть пустыми (data == nil).
-func (client *StatelessClient) respond(status string, data interface{}) {
-	client.enc.Encode(proto.NewMessage(status, data))
+
+func (client *StatelessClient) respond(message *proto.Message) {
+	var msgBytes, err = json.Marshal(message)
+	handleErr(err)
+
+	client.conn.WriteToUDP(msgBytes, client.addr)
 }
+
 
 func main() {
 	var (
@@ -151,11 +136,6 @@ func main() {
 	} else if conn, err := net.ListenUDP("udp", serverAddr); err != nil {
 		log.Error("creating listening connection", "error", err)
 	} else {
-		// Цикл приёма входящих соединений.
-		//for {
-		//	//go NewClient(conn).handle()
-		//
-		//}
 		log.Info("server listens incoming messages from clients",
 			"addr", serverAddr.String())
 		buf := make([]byte, 1000)
@@ -165,23 +145,14 @@ func main() {
 			} else {
 				log.Info("Reading", "read bytes", bytesRead, "from", addr)
 
-				s := string(buf[:bytesRead])
-				log.Info("Got", "msg", s)
+				var rqBytes = buf[:bytesRead]
+				log.Info("Got", "msg", string(rqBytes))
 
-				var msg = proto.NewMessage(proto.CMD_OK, nil)
-				var msgAsBytes, err = json.Marshal(msg)
+				var rq proto.Message
+				var err = json.Unmarshal(rqBytes, &rq)
 				handleErr(err)
 
-				println("responding with: ", string(msgAsBytes))
-
-				conn.WriteToUDP(msgAsBytes, addr)
-				//var enc = json.NewEncoder(conn)
-				//enc.Encode(proto.NewMessage(proto.CMD_OK, nil))
-				//else if _, err = conn.WriteToUDP([]byte(strconv.Itoa(x*2)), addr); err != nil {
-				//	log.Error("sending message to client", "error", err, "client", addr.String())
-				//} else {
-				//	log.Info("successful interaction with client", "x", x, "y", x*2, "client", addr.String())
-				//}
+				go NewClient(conn, addr).handleRequest(&rq)
 			}
 		}
 	}

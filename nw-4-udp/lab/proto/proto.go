@@ -11,6 +11,7 @@ const CMD_QUIT = "q"
 const CMD_OK = "ok"
 const CMD_SUCCESS = "success"
 const CMD_FAIL = "fail"
+const CMD_UNKNOWN = "unknown"
 
 type Message struct {
 

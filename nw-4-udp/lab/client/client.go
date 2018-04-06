@@ -16,13 +16,15 @@ import (
 
 type DurableClient struct {
 	conn				*net.UDPConn
+	addr 				*net.UDPAddr
 	retryTimeoutMillis 	int         // if there is no response within this time, message will be sent again
 	messagesStack      	stack.Stack // ordered list of ids of messages that were sent
 }
 
-func NewDurableClient(conn *net.UDPConn, retryTimeoutMillis int) *DurableClient {
+func NewDurableClient(conn *net.UDPConn, addr *net.UDPAddr, retryTimeoutMillis int) *DurableClient {
 	return &DurableClient{
 		conn: 				conn,
+		addr:				addr,
 		retryTimeoutMillis: retryTimeoutMillis,
 		messagesStack:      stack.Stack{},
 	}
@@ -64,13 +66,13 @@ func (client *DurableClient) interact() {
 		}
 
 		// handle outcoming message
-		send_request(json.NewEncoder(client.conn), message)
+		client.send_request(message)
 
 		// Получение ответа.
 		println("handling response")
 
 		var buf = make([]byte, 1000)
-		var bytesRead, _, readErr = client.conn.ReadFromUDP(buf)
+		var bytesRead, readErr = client.conn.Read(buf)
 		handleErr(readErr)
 
 		var rspBytes = buf[:bytesRead]
@@ -127,10 +129,15 @@ func (client *DurableClient) interact() {
 
 // send_request - вспомогательная функция для передачи запроса с указанной командой
 // и данными. Данные могут быть пустыми (data == nil).
-func send_request(encoder *json.Encoder, message *proto.Message) {
+func (client *DurableClient) send_request(message *proto.Message) {
 	//var raw json.RawMessage
 	//raw, _ = json.Marshal(data)
-	encoder.Encode(message)
+	//encoder.Encode(message)
+
+	var serialized, err = json.Marshal(message)
+	handleErr(err)
+
+	client.conn.Write(serialized)
 }
 
 
@@ -150,7 +157,7 @@ func main() {
 	handleErr(err)
 
 	//conn.SetReadDeadline(1 * time.Second.Seconds())
-	var client = NewDurableClient(conn, 5000)
+	var client = NewDurableClient(conn, serverAddr, 5000)
 	client.interact()
 	//conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	//interact(conn)
