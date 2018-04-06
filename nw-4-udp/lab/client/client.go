@@ -4,7 +4,7 @@ import (
 	"flag"
 	"github.com/mgutz/logxi/v1"
 	"net"
-	"os"
+	//"os"
 	"fmt"
 	"encoding/json"
 	//"github.com/skorobogatov/input"
@@ -49,18 +49,17 @@ func (client *DurableClient) interact() {
 
 	for {
 		fmt.Printf("command: ")
-		var command = input.Gets()
+		var command = proto.CMD_COUNT//input.Gets()
 		var message *proto.Message
 
 		switch command {
 		case proto.CMD_QUIT:
-			//sendReliably(encoder, proto.CMD_QUIT, nil)
 			message = proto.NewMessage(proto.CMD_QUIT, nil)
 			return
 
 		case proto.CMD_COUNT:
 			fmt.Printf("Center X coordinate:")
-			var x1 = "1"//input.Gets()
+			var x1 = input.Gets()
 			fmt.Printf("Center X coordinate:")
 			var y1 = "1"//input.Gets()
 			fmt.Printf("Contour X coordinate:")
@@ -70,7 +69,6 @@ func (client *DurableClient) interact() {
 
 			var circle = proto.NewCircle(x1, y1, x2, y2)
 			message = proto.NewMessage(proto.CMD_COUNT, circle)
-			//sendReliably(encoder, proto.CMD_COUNT, circle)
 
 		default:
 			fmt.Printf("error: unknown command\n")
@@ -78,7 +76,7 @@ func (client *DurableClient) interact() {
 		}
 
 		// make sure message has been sent (get ACK for message)
-		var messageDelivered = sendReliably(client.conn, message, func(data []byte) {
+		var messageDelivered = proto.WriteReliably(client.conn, message, func(data []byte) {
 			client.conn.Write(data)
 		}, func(buffer []byte) (int,  error) {
 			return client.conn.Read(buffer)
@@ -89,27 +87,19 @@ func (client *DurableClient) interact() {
 			continue
 		}
 		// mark message as sent
-		client.messages[message.Id] = false
 		client.lastMessageId = message.Id
+		client.messages[client.lastMessageId] = false
+		log.Debug("Message has been delivered")
 
 
 
-		// Получение ответа.
-		println("handling response")
-		var buf = make([]byte, 1000)
-		var bytesRead, readErr = client.conn.Read(buf)
-		if nil != readErr {
-			println("readerr")
+		var rsp = client.getResponseReliably()
+		if nil == rsp {
+			log.Error("Answer could not be acquired :(")
 			continue
 		}
-
-
-		var rspBytes = buf[:bytesRead]
-		println("response: ", string(rspBytes))
-
-		var rsp proto.Message
-		var unmarshalErr = json.Unmarshal(rspBytes, &rsp)
-		handleErr(unmarshalErr)
+		// mark answer as acquired
+		client.messages[client.lastMessageId] = true
 
 		switch rsp.Command {
 		case proto.CMD_OK:
@@ -150,50 +140,32 @@ func (client *DurableClient) interact() {
 }
 
 
-func sendReliably(conn *net.UDPConn,
-	message *proto.Message,
-	//maxRetries int,
-	writeFunc func(data []byte),
-	readFunc func(buffer []byte) (int, error)) bool {
+func (client *DurableClient) getResponseReliably() *proto.Message {
 
-	var serialized, err = json.Marshal(message)
-	handleErr(err)
-
-	var retry = 10
-	// keep sending message while we can
-	for retry > 0 {
-		log.Debug(fmt.Sprintf("Sending message. Retries left: %s", strconv.Itoa(retry)))
-		//client.conn.Write(serialized)
-		writeFunc(serialized)
+	var retriesLeft = 10
+	for retriesLeft > 0 {
+		log.Debug(fmt.Sprintf("Acquiring response. Retries left: %s", strconv.Itoa(retriesLeft)))
 
 		// set timeout for nearest Read() call
-		conn.SetReadDeadline(time.Now().Add(time.Duration(100) * time.Millisecond))
+		client.conn.SetReadDeadline(time.Now().Add(time.Duration(100) * time.Millisecond))
 
-		// read into buffer and check if there was timeout error while reading
 		var buf = make([]byte, 1000)
-		//var bytesRead, readErr = client.conn.Read(buf)
-		var bytesRead, readErr = readFunc(buf)
+		var bytesRead, readErr = client.conn.Read(buf)
 
-		// deserialize into regular message and check if message == ACK
-		var ackBytes = buf[:bytesRead]
-		var ack proto.Message
-		var deserializeErr = json.Unmarshal(ackBytes, &ack)
+		var rspBytes = buf[:bytesRead]
+		println("got ", string(rspBytes))
+		var rsp proto.Message
+		var unmarshalErr = json.Unmarshal(rspBytes, &rsp)
 
-		if nil == readErr && nil == deserializeErr && proto.CMD_ACK == ack.Command {
-			// there is an ACK for the message => it was delivered for sure
-			log.Debug("Ack for message has been acquired")
-			return true
+		if nil == readErr && nil == unmarshalErr &&
+			client.lastMessageId == rsp.Id && false == client.messages[client.lastMessageId] {
+			return &rsp
 		}
-		retry--
+
+		retriesLeft--
 	}
 
-	// message was not delivered :(
-	return false
-}
-
-
-func acquireAnswerWithinTimeout() bool {
-	return true
+	return nil
 }
 
 
@@ -202,20 +174,11 @@ func main() {
 	flag.StringVar(&serverAddrStr, "server", "127.0.0.1:5000", "set server IP address and port")
 
 	var serverAddr, addrErr = net.ResolveUDPAddr("udp", serverAddrStr)
-	handleErr(addrErr)
+	proto.HandleErr(addrErr)
 
 	var conn, err = net.DialUDP("udp", nil, serverAddr)
-	handleErr(err)
+	proto.HandleErr(err)
 
 	var client = NewDurableClient(conn, serverAddr, 3)
 	client.interact()
-}
-
-
-func handleErr(e error) {
-	if nil != e {
-		log.Error("Exiting with error ", e.Error())
-		println(e)
-		os.Exit(1)
-	}
 }

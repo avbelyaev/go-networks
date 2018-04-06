@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"math"
 	"network-labs/nw-4-udp/lab/proto"
+	//"time"
 )
 
 /*
@@ -69,7 +70,9 @@ func countCircleSquare(circle proto.Circle) (float64, error) {
 func (client *StatelessClient) handleRequest(req *proto.Message) {
 	var message *proto.Message
 
-	client.respond(proto.NewMessage(proto.CMD_ACK, nil))
+	var ack = proto.NewMessage(proto.CMD_ACK, nil)
+	log.Debug(fmt.Sprintf("Responding with ACK, %s", ack.Id))
+	client.respond(ack)
 
 	switch req.Command {
 	case proto.CMD_QUIT:
@@ -94,6 +97,8 @@ func (client *StatelessClient) handleRequest(req *proto.Message) {
 					client.logger.Info("square of circle has been counted", "value", circleSquareAsString)
 
 					message = proto.NewMessage(proto.CMD_SUCCESS, circleSquareAsString)
+					//TODO sign message with same ID
+					message.Id = req.Id
 				}
 			}
 		}
@@ -110,7 +115,22 @@ func (client *StatelessClient) handleRequest(req *proto.Message) {
 		message = proto.NewMessage(proto.CMD_UNKNOWN, "unknown command")
 	}
 
-	client.respond(message)
+	//log.Debug("Responding in 100 ms")
+	//time.Sleep(time.Duration(100) * time.Millisecond)
+	log.Debug(fmt.Sprintf("Responding with DATA, %s", message.Id))
+
+
+	var rspDelivered = proto.WriteReliably(client.conn, message, func(data []byte) {
+		client.conn.WriteToUDP(data, client.addr)
+	}, func(buffer []byte) (int, error) {
+		var bytesRead, _, err = client.conn.ReadFromUDP(buffer)
+		return bytesRead, err
+	})
+
+	if !rspDelivered {
+		log.Error("Could not deliver answer")
+	}
+	//client.respond(message)
 }
 
 
@@ -118,7 +138,7 @@ func (client *StatelessClient) respond(message *proto.Message) {
 	var msgBytes, err = json.Marshal(message)
 	handleErr(err)
 
-	println("writing back")
+	//println("write ", string(msgBytes))
 	client.conn.WriteToUDP(msgBytes, client.addr)
 }
 
@@ -145,9 +165,8 @@ func main() {
 		for {
 			if bytesRead, addr, err := conn.ReadFromUDP(buf); err != nil {
 				log.Error("receiving message from client", "error", err)
-			} else {
-				log.Info("Reading", "read bytes", bytesRead, "from", addr)
 
+			} else {
 				var rqBytes = buf[:bytesRead]
 				log.Info("Got", "msg", string(rqBytes))
 
