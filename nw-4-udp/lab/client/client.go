@@ -7,13 +7,14 @@ import (
 	"os"
 	"fmt"
 	"encoding/json"
-	"github.com/skorobogatov/input"
+	//"github.com/skorobogatov/input"
 	//"network-labs/nw-4-udp/lab/proto"
 	"github.com/golang-collections/collections/stack"
 	//"time"
 	"network-labs/nw-4-udp/lab/proto"
 	"time"
 	"strconv"
+	"github.com/skorobogatov/input"
 )
 
 type DurableClient struct {
@@ -22,6 +23,8 @@ type DurableClient struct {
 	timeoutSeconds 	int         // if there is no response within this time, message will be sent again
 	messagesStack  	stack.Stack // ordered list of ids of messages that were sent
 	maxRetries		int
+	messages		map[string]bool
+	lastMessageId	string
 }
 
 func NewDurableClient(conn *net.UDPConn, addr *net.UDPAddr, retryTimeoutMillis int) *DurableClient {
@@ -31,6 +34,7 @@ func NewDurableClient(conn *net.UDPConn, addr *net.UDPAddr, retryTimeoutMillis i
 		timeoutSeconds: retryTimeoutMillis,
 		messagesStack:  stack.Stack{},
 		maxRetries:		10,
+		messages:		make(map[string]bool),
 	}
 }
 
@@ -56,7 +60,7 @@ func (client *DurableClient) interact() {
 
 		case proto.CMD_COUNT:
 			fmt.Printf("Center X coordinate:")
-			var x1 = input.Gets()
+			var x1 = "1"//input.Gets()
 			fmt.Printf("Center X coordinate:")
 			var y1 = "1"//input.Gets()
 			fmt.Printf("Contour X coordinate:")
@@ -73,20 +77,30 @@ func (client *DurableClient) interact() {
 			continue
 		}
 
-		// handle outcoming message
-		var messageDelivered = client.sendReliably(message)
+		// make sure message has been sent (get ACK for message)
+		var messageDelivered = sendReliably(client.conn, message, func(data []byte) {
+			client.conn.Write(data)
+		}, func(buffer []byte) (int,  error) {
+			return client.conn.Read(buffer)
+		})
+
 		if !messageDelivered {
 			log.Error("Message could not be delivered :(")
 			continue
 		}
+		// mark message as sent
+		client.messages[message.Id] = false
+		client.lastMessageId = message.Id
+
+
 
 		// Получение ответа.
 		println("handling response")
-
 		var buf = make([]byte, 1000)
 		var bytesRead, readErr = client.conn.Read(buf)
 		if nil != readErr {
 			println("readerr")
+			continue
 		}
 
 
@@ -96,13 +110,7 @@ func (client *DurableClient) interact() {
 		var rsp proto.Message
 		var unmarshalErr = json.Unmarshal(rspBytes, &rsp)
 		handleErr(unmarshalErr)
-		//var rsp proto.Message
-		//if err := decoder.Decode(s); err != nil {
-		//	fmt.Printf("error: %v\n", err)
-		//	break
-		//}
 
-		println("siwtching")
 		switch rsp.Command {
 		case proto.CMD_OK:
 			fmt.Printf("ok\n")
@@ -142,22 +150,29 @@ func (client *DurableClient) interact() {
 }
 
 
-func (client *DurableClient) sendReliably(message *proto.Message) bool {
+func sendReliably(conn *net.UDPConn,
+	message *proto.Message,
+	//maxRetries int,
+	writeFunc func(data []byte),
+	readFunc func(buffer []byte) (int, error)) bool {
+
 	var serialized, err = json.Marshal(message)
 	handleErr(err)
 
-	var retriesLeft = client.maxRetries
+	var retry = 10
 	// keep sending message while we can
-	for retriesLeft > 0 {
-		log.Debug(fmt.Sprintf("Sending message. Retries left: %s", strconv.Itoa(retriesLeft)))
-		client.conn.Write(serialized)
+	for retry > 0 {
+		log.Debug(fmt.Sprintf("Sending message. Retries left: %s", strconv.Itoa(retry)))
+		//client.conn.Write(serialized)
+		writeFunc(serialized)
 
 		// set timeout for nearest Read() call
-		client.conn.SetReadDeadline(time.Now().Add(time.Duration(client.timeoutSeconds) * time.Second))
+		conn.SetReadDeadline(time.Now().Add(time.Duration(100) * time.Millisecond))
 
 		// read into buffer and check if there was timeout error while reading
 		var buf = make([]byte, 1000)
-		var bytesRead, readErr = client.conn.Read(buf)
+		//var bytesRead, readErr = client.conn.Read(buf)
+		var bytesRead, readErr = readFunc(buf)
 
 		// deserialize into regular message and check if message == ACK
 		var ackBytes = buf[:bytesRead]
@@ -169,7 +184,7 @@ func (client *DurableClient) sendReliably(message *proto.Message) bool {
 			log.Debug("Ack for message has been acquired")
 			return true
 		}
-		retriesLeft--
+		retry--
 	}
 
 	// message was not delivered :(
@@ -184,7 +199,7 @@ func acquireAnswerWithinTimeout() bool {
 
 func main() {
 	var serverAddrStr string
-	flag.StringVar(&serverAddrStr, "server", "127.0.0.1:6000", "set server IP address and port")
+	flag.StringVar(&serverAddrStr, "server", "127.0.0.1:5000", "set server IP address and port")
 
 	var serverAddr, addrErr = net.ResolveUDPAddr("udp", serverAddrStr)
 	handleErr(addrErr)

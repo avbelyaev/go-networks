@@ -69,6 +69,8 @@ func countCircleSquare(circle proto.Circle) (float64, error) {
 func (client *StatelessClient) handleRequest(req *proto.Message) {
 	var message *proto.Message
 
+	client.respond(proto.NewMessage(proto.CMD_ACK, nil))
+
 	switch req.Command {
 	case proto.CMD_QUIT:
 		message = proto.NewMessage(proto.CMD_OK, nil)
@@ -108,9 +110,6 @@ func (client *StatelessClient) handleRequest(req *proto.Message) {
 		message = proto.NewMessage(proto.CMD_UNKNOWN, "unknown command")
 	}
 
-	for {
-
-	}
 	client.respond(message)
 }
 
@@ -119,6 +118,7 @@ func (client *StatelessClient) respond(message *proto.Message) {
 	var msgBytes, err = json.Marshal(message)
 	handleErr(err)
 
+	println("writing back")
 	client.conn.WriteToUDP(msgBytes, client.addr)
 }
 
