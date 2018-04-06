@@ -2,8 +2,6 @@ package proto
 
 import (
 	"encoding/json"
-	//"strconv"
-	//"math"
 )
 
 const CMD_COUNT = "c"
@@ -12,6 +10,7 @@ const CMD_OK = "ok"
 const CMD_SUCCESS = "success"
 const CMD_FAIL = "fail"
 const CMD_UNKNOWN = "unknown"
+const CMD_ACK = "acknowledge"
 
 type Message struct {
 
@@ -49,4 +48,17 @@ type Circle struct {
 
 	// точка на окржуности (Point)
 	Contour Point `json:"contour"`
+}
+
+func NewCircle(centerX string, centerY string, contourX string, contourY string) *Circle {
+	return &Circle{
+		Center: Point{
+			CoordX: centerX,
+			CoordY: centerY,
+		},
+		Contour: Point{
+			CoordX: contourX,
+			CoordY: contourY,
+		},
+	}
 }

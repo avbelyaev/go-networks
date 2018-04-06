@@ -13,6 +13,7 @@ import (
 	//"time"
 	"network-labs/nw-4-udp/lab/proto"
 	"time"
+	"strconv"
 )
 
 type DurableClient struct {
@@ -73,7 +74,11 @@ func (client *DurableClient) interact() {
 		}
 
 		// handle outcoming message
-		client.sendReliably(message)
+		var messageDelivered = client.sendReliably(message)
+		if !messageDelivered {
+			log.Error("Message could not be delivered :(")
+			continue
+		}
 
 		// Получение ответа.
 		println("handling response")
@@ -138,19 +143,13 @@ func (client *DurableClient) interact() {
 
 
 func (client *DurableClient) sendReliably(message *proto.Message) bool {
-	var sendAgain = func(err error, ackMessage proto.Message, retriesLeft int) bool {
-		return retriesLeft > 0 && (nil != err || proto.CMD_ACK != ackMessage.Command)
-	}
-
 	var serialized, err = json.Marshal(message)
 	handleErr(err)
 
-	var readErr error
-	var bytesRead int
-	var ack proto.Message
 	var retriesLeft = client.maxRetries
-	// keep sending while Read() returns error
-	for repeatSend := true; repeatSend; repeatSend = sendAgain(readErr, ack, retriesLeft) {
+	// keep sending message while we can
+	for retriesLeft > 0 {
+		log.Debug(fmt.Sprintf("Sending message. Retries left: %s", strconv.Itoa(retriesLeft)))
 		client.conn.Write(serialized)
 
 		// set timeout for nearest Read() call
@@ -158,16 +157,23 @@ func (client *DurableClient) sendReliably(message *proto.Message) bool {
 
 		// read into buffer and check if there was timeout error while reading
 		var buf = make([]byte, 1000)
-		bytesRead, readErr = client.conn.Read(buf)
+		var bytesRead, readErr = client.conn.Read(buf)
 
 		// deserialize into regular message and check if message == ACK
 		var ackBytes = buf[:bytesRead]
-		_ = json.Unmarshal(ackBytes, &ack)
+		var ack proto.Message
+		var deserializeErr = json.Unmarshal(ackBytes, &ack)
 
+		if nil == readErr && nil == deserializeErr && proto.CMD_ACK == ack.Command {
+			// there is an ACK for the message => it was delivered for sure
+			log.Debug("Ack for message has been acquired")
+			return true
+		}
 		retriesLeft--
 	}
 
-	return true
+	// message was not delivered :(
+	return false
 }
 
 
@@ -186,7 +192,7 @@ func main() {
 	var conn, err = net.DialUDP("udp", nil, serverAddr)
 	handleErr(err)
 
-	var client = NewDurableClient(conn, serverAddr, 10)
+	var client = NewDurableClient(conn, serverAddr, 3)
 	client.interact()
 }
 

@@ -108,6 +108,9 @@ func (client *StatelessClient) handleRequest(req *proto.Message) {
 		message = proto.NewMessage(proto.CMD_UNKNOWN, "unknown command")
 	}
 
+	for {
+
+	}
 	client.respond(message)
 }
 
