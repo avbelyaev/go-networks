@@ -1,6 +1,10 @@
 package proto
 
-import "encoding/json"
+import (
+	"encoding/json"
+	//"strconv"
+	//"math"
+)
 
 const CMD_COUNT = "c"
 const CMD_QUIT = "q"
@@ -12,7 +16,22 @@ type Message struct {
 
 	Command string `json:"command"`
 
-	Data *json.RawMessage `json:"data"`
+	Payload *json.RawMessage `json:"data"`
+}
+
+
+//TODO to export function from this package into another package
+//function names should start with uppercase
+
+
+func NewMessage(command string, payload interface{}) *Message {
+	var raw json.RawMessage
+	raw, _ = json.Marshal(payload)
+
+	return &Message{
+		Command: command,
+		Payload: &raw,
+	}
 }
 
 type Point struct {

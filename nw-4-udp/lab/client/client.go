@@ -8,29 +8,40 @@ import (
 	"fmt"
 	"encoding/json"
 	"github.com/skorobogatov/input"
-	"network-labs/nw-4-udp/lab/proto"
+	//"network-labs/nw-4-udp/lab/proto"
 	"github.com/golang-collections/collections/stack"
-	"time"
+	//"time"
+	"network-labs/nw-4-udp/lab/proto"
 )
 
-type Dialogue struct {
-
-	// SetReadDeadline(retry...)
-	retryTimeoutMillis int		// if there is no response within this time, message will be sent again
-	sentMessageIds stack.Stack	// ordered list of ids of messages that were sent
+type DurableClient struct {
+	conn				*net.UDPConn
+	retryTimeoutMillis 	int         // if there is no response within this time, message will be sent again
+	messagesStack      	stack.Stack // ordered list of ids of messages that were sent
 }
 
-func interact(conn *net.UDPConn) {
-	defer conn.Close()
+func NewDurableClient(conn *net.UDPConn, retryTimeoutMillis int) *DurableClient {
+	return &DurableClient{
+		conn: 				conn,
+		retryTimeoutMillis: retryTimeoutMillis,
+		messagesStack:      stack.Stack{},
+	}
+}
 
-	var encoder, decoder = json.NewEncoder(conn), json.NewDecoder(conn)
+func (client *DurableClient) interact() {
+	defer client.conn.Close()
+
+	//var encoder, decoder = json.NewEncoder(client.conn), json.NewDecoder(client.conn)
+	//var decoder = json.NewDecoder(client.conn)
 	for {
 		fmt.Printf("command: ")
 		var command = input.Gets()
+		var message *proto.Message
 
 		switch command {
 		case proto.CMD_QUIT:
-			send_request(encoder, proto.CMD_QUIT, nil)
+			//send_request(encoder, proto.CMD_QUIT, nil)
+			message = proto.NewMessage(proto.CMD_QUIT, nil)
 			return
 
 		case proto.CMD_COUNT:
@@ -44,31 +55,48 @@ func interact(conn *net.UDPConn) {
 			fmt.Printf("Contour Y coordinate:")
 			circle.Contour.CoordY = "2"//input.Gets()
 
-			send_request(encoder, proto.CMD_COUNT, circle)
+			message = proto.NewMessage(proto.CMD_COUNT, circle)
+			//send_request(encoder, proto.CMD_COUNT, circle)
 
 		default:
 			fmt.Printf("error: unknown command\n")
 			continue
 		}
 
-		// Получение ответа.
-		var rsp proto.Message
-		if err := decoder.Decode(&rsp); err != nil {
-			fmt.Printf("error: %v\n", err)
-			break
-		}
+		// handle outcoming message
+		send_request(json.NewEncoder(client.conn), message)
 
+		// Получение ответа.
+		println("handling response")
+
+		var buf = make([]byte, 1000)
+		var bytesRead, _, readErr = client.conn.ReadFromUDP(buf)
+		handleErr(readErr)
+
+		var rspBytes = buf[:bytesRead]
+		println("response: ", string(rspBytes))
+
+		var rsp proto.Message
+		var unmarshalErr = json.Unmarshal(rspBytes, &rsp)
+		handleErr(unmarshalErr)
+		//var rsp proto.Message
+		//if err := decoder.Decode(s); err != nil {
+		//	fmt.Printf("error: %v\n", err)
+		//	break
+		//}
+
+		println("siwtching")
 		switch rsp.Command {
 		case proto.CMD_OK:
 			fmt.Printf("ok\n")
 
 		case proto.CMD_FAIL:
-			if rsp.Data == nil {
+			if rsp.Payload == nil {
 				fmt.Printf("error: data field is absent in response\n")
 
 			} else {
 				var errorMsg string
-				if err := json.Unmarshal(*rsp.Data, &errorMsg); err != nil {
+				if err := json.Unmarshal(*rsp.Payload, &errorMsg); err != nil {
 					fmt.Printf("error: malformed data field in response\n")
 
 				} else {
@@ -77,12 +105,12 @@ func interact(conn *net.UDPConn) {
 			}
 
 		case proto.CMD_SUCCESS:
-			if rsp.Data == nil {
+			if rsp.Payload == nil {
 				fmt.Printf("error: data field is absent in response\n")
 
 			} else {
 				var circleSquare string
-				if err := json.Unmarshal(*rsp.Data, &circleSquare); err != nil {
+				if err := json.Unmarshal(*rsp.Payload, &circleSquare); err != nil {
 					fmt.Printf("error: malformed data field in response\n")
 
 				} else {
@@ -99,10 +127,10 @@ func interact(conn *net.UDPConn) {
 
 // send_request - вспомогательная функция для передачи запроса с указанной командой
 // и данными. Данные могут быть пустыми (data == nil).
-func send_request(encoder *json.Encoder, command string, data interface{}) {
-	var raw json.RawMessage
-	raw, _ = json.Marshal(data)
-	encoder.Encode(&proto.Message{command, &raw})
+func send_request(encoder *json.Encoder, message *proto.Message) {
+	//var raw json.RawMessage
+	//raw, _ = json.Marshal(data)
+	encoder.Encode(message)
 }
 
 
@@ -122,8 +150,10 @@ func main() {
 	handleErr(err)
 
 	//conn.SetReadDeadline(1 * time.Second.Seconds())
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	interact(conn)
+	var client = NewDurableClient(conn, 5000)
+	client.interact()
+	//conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	//interact(conn)
 	//{
 
 
