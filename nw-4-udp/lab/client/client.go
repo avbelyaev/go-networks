@@ -12,29 +12,36 @@ import (
 	"github.com/golang-collections/collections/stack"
 	//"time"
 	"network-labs/nw-4-udp/lab/proto"
+	"time"
 )
 
 type DurableClient struct {
-	conn				*net.UDPConn
-	addr 				*net.UDPAddr
-	retryTimeoutMillis 	int         // if there is no response within this time, message will be sent again
-	messagesStack      	stack.Stack // ordered list of ids of messages that were sent
+	conn           	*net.UDPConn
+	addr           	*net.UDPAddr
+	timeoutSeconds 	int         // if there is no response within this time, message will be sent again
+	messagesStack  	stack.Stack // ordered list of ids of messages that were sent
+	maxRetries		int
 }
 
 func NewDurableClient(conn *net.UDPConn, addr *net.UDPAddr, retryTimeoutMillis int) *DurableClient {
 	return &DurableClient{
-		conn: 				conn,
-		addr:				addr,
-		retryTimeoutMillis: retryTimeoutMillis,
-		messagesStack:      stack.Stack{},
+		conn:           conn,
+		addr:           addr,
+		timeoutSeconds: retryTimeoutMillis,
+		messagesStack:  stack.Stack{},
+		maxRetries:		10,
 	}
 }
+
+
+//func handleMessageDrop(conn *net.UDPConn, timeoutSeconds int) {
+//
+//}
+
 
 func (client *DurableClient) interact() {
 	defer client.conn.Close()
 
-	//var encoder, decoder = json.NewEncoder(client.conn), json.NewDecoder(client.conn)
-	//var decoder = json.NewDecoder(client.conn)
 	for {
 		fmt.Printf("command: ")
 		var command = input.Gets()
@@ -42,23 +49,23 @@ func (client *DurableClient) interact() {
 
 		switch command {
 		case proto.CMD_QUIT:
-			//send_request(encoder, proto.CMD_QUIT, nil)
+			//sendReliably(encoder, proto.CMD_QUIT, nil)
 			message = proto.NewMessage(proto.CMD_QUIT, nil)
 			return
 
 		case proto.CMD_COUNT:
-			var circle proto.Circle
 			fmt.Printf("Center X coordinate:")
-			circle.Center.CoordX = input.Gets()
+			var x1 = input.Gets()
 			fmt.Printf("Center X coordinate:")
-			circle.Center.CoordY = "1"//input.Gets()
+			var y1 = "1"//input.Gets()
 			fmt.Printf("Contour X coordinate:")
-			circle.Contour.CoordX = "2"//input.Gets()
+			var x2 = "2"//input.Gets()
 			fmt.Printf("Contour Y coordinate:")
-			circle.Contour.CoordY = "2"//input.Gets()
+			var y2 = "2"//input.Gets()
 
+			var circle = proto.NewCircle(x1, y1, x2, y2)
 			message = proto.NewMessage(proto.CMD_COUNT, circle)
-			//send_request(encoder, proto.CMD_COUNT, circle)
+			//sendReliably(encoder, proto.CMD_COUNT, circle)
 
 		default:
 			fmt.Printf("error: unknown command\n")
@@ -66,14 +73,17 @@ func (client *DurableClient) interact() {
 		}
 
 		// handle outcoming message
-		client.send_request(message)
+		client.sendReliably(message)
 
 		// Получение ответа.
 		println("handling response")
 
 		var buf = make([]byte, 1000)
 		var bytesRead, readErr = client.conn.Read(buf)
-		handleErr(readErr)
+		if nil != readErr {
+			println("readerr")
+		}
+
 
 		var rspBytes = buf[:bytesRead]
 		println("response: ", string(rspBytes))
@@ -127,17 +137,37 @@ func (client *DurableClient) interact() {
 }
 
 
-// send_request - вспомогательная функция для передачи запроса с указанной командой
-// и данными. Данные могут быть пустыми (data == nil).
-func (client *DurableClient) send_request(message *proto.Message) {
-	//var raw json.RawMessage
-	//raw, _ = json.Marshal(data)
-	//encoder.Encode(message)
+func (client *DurableClient) sendReliably(message *proto.Message) bool {
+	var sendAgain = func(err error, ackMessage proto.Message, retriesLeft int) bool {
+		return retriesLeft > 0 && (nil != err || proto.CMD_ACK != ackMessage.Command)
+	}
 
 	var serialized, err = json.Marshal(message)
 	handleErr(err)
 
-	client.conn.Write(serialized)
+	var readErr error
+	var bytesRead int
+	var ack proto.Message
+	var retriesLeft = client.maxRetries
+	// keep sending while Read() returns error
+	for repeatSend := true; repeatSend; repeatSend = sendAgain(readErr, ack, retriesLeft) {
+		client.conn.Write(serialized)
+
+		// set timeout for nearest Read() call
+		client.conn.SetReadDeadline(time.Now().Add(time.Duration(client.timeoutSeconds) * time.Second))
+
+		// read into buffer and check if there was timeout error while reading
+		var buf = make([]byte, 1000)
+		bytesRead, readErr = client.conn.Read(buf)
+
+		// deserialize into regular message and check if message == ACK
+		var ackBytes = buf[:bytesRead]
+		_ = json.Unmarshal(ackBytes, &ack)
+
+		retriesLeft--
+	}
+
+	return true
 }
 
 
@@ -156,34 +186,8 @@ func main() {
 	var conn, err = net.DialUDP("udp", nil, serverAddr)
 	handleErr(err)
 
-	//conn.SetReadDeadline(1 * time.Second.Seconds())
-	var client = NewDurableClient(conn, serverAddr, 5000)
+	var client = NewDurableClient(conn, serverAddr, 10)
 	client.interact()
-	//conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	//interact(conn)
-	//{
-
-
-		//buf := make([]byte, 32)
-		//for i := uint(0); i < n; i++ {
-		//	x := rand.Intn(1000)
-		//	if _, err := conn.Write([]byte(strconv.Itoa(x))); err != nil {
-		//		log.Error("sending request to server", "error", err, "x", x)
-		//
-		//	} else if bytesRead, err := conn.Read(buf); err != nil {
-		//		log.Error("receiving answer from server", "error", err)
-		//
-		//	} else {
-		//		yStr := string(buf[:bytesRead])
-		//		if y, err := strconv.Atoi(yStr); err != nil {
-		//			log.Error("cannot parse answer", "answer", yStr, "error", err)
-		//
-		//		} else {
-		//			log.Info("successful interaction with server", "x", x, "y", y)
-		//		}
-		//	}
-		//}
-	//}
 }
 
 
