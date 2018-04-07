@@ -52,10 +52,13 @@ func (client *StatelessClient) handle() {
 }
 
 func countSquareDifference(coord1 string, coord2 string) (float64, error) {
-	circleCenterX, err := strconv.ParseFloat(string(coord1), 64)
-	circleContourX, err := strconv.ParseFloat(string(coord2), 64)
-	if nil != err {
-		return 0, err
+	circleCenterX, err1 := strconv.ParseFloat(string(coord1), 64)
+	circleContourX, err2 := strconv.ParseFloat(string(coord2), 64)
+	if nil != err1 {
+		return 0, err1
+
+	} else if nil != err2 {
+		return 0, err2
 
 	} else {
 		delta := circleCenterX - circleContourX
