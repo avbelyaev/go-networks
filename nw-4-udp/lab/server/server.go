@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"math"
 	"network-labs/nw-4-udp/lab/proto"
-	//"time"
 )
 
 /*
@@ -40,10 +39,13 @@ func NewClient(conn *net.UDPConn, addr *net.UDPAddr) *StatelessClient {
 
 
 func countSquareDifference(coord1 string, coord2 string) (float64, error) {
-	circleCenterX, err := strconv.ParseFloat(string(coord1), 64)
-	circleContourX, err := strconv.ParseFloat(string(coord2), 64)
-	if nil != err {
-		return 0, err
+	circleCenterX, err1 := strconv.ParseFloat(string(coord1), 64)
+	circleContourX, err2 := strconv.ParseFloat(string(coord2), 64)
+	if nil != err1 {
+		return 0, err1
+
+	} else if nil != err2 {
+		return 0, err2
 
 	} else {
 		delta := circleCenterX - circleContourX
@@ -52,6 +54,8 @@ func countSquareDifference(coord1 string, coord2 string) (float64, error) {
 }
 
 func countCircleSquare(circle proto.Circle) (float64, error) {
+	//println("center: (", circle.Center.CoordX, ", ", circle.Center.CoordY, ")")
+	//println("cntour: (", circle.Contour.CoordX, ", ", circle.Contour.CoordY, ")")
 	deltaXSquared, err := countSquareDifference(circle.Center.CoordX, circle.Contour.CoordX)
 	if nil != err {
 		return 0, err
@@ -70,9 +74,7 @@ func countCircleSquare(circle proto.Circle) (float64, error) {
 func (client *StatelessClient) handleRequest(req *proto.Message) {
 	var message *proto.Message
 
-	var ack = proto.NewMessage(proto.CMD_ACK, nil)
-	log.Debug(fmt.Sprintf("Responding with ACK, %s", ack.Id))
-	client.respond(ack)
+	//client.respond(proto.NewMessage(proto.CMD_ACK, nil))
 
 	switch req.Command {
 	case proto.CMD_QUIT:
@@ -97,8 +99,6 @@ func (client *StatelessClient) handleRequest(req *proto.Message) {
 					client.logger.Info("square of circle has been counted", "value", circleSquareAsString)
 
 					message = proto.NewMessage(proto.CMD_SUCCESS, circleSquareAsString)
-					//TODO sign message with same ID
-					message.Id = req.Id
 				}
 			}
 		}
@@ -115,22 +115,9 @@ func (client *StatelessClient) handleRequest(req *proto.Message) {
 		message = proto.NewMessage(proto.CMD_UNKNOWN, "unknown command")
 	}
 
-	//log.Debug("Responding in 100 ms")
-	//time.Sleep(time.Duration(100) * time.Millisecond)
-	log.Debug(fmt.Sprintf("Responding with DATA, %s", message.Id))
-
-
-	var rspDelivered = proto.WriteReliably(client.conn, message, func(data []byte) {
-		client.conn.WriteToUDP(data, client.addr)
-	}, func(buffer []byte) (int, error) {
-		var bytesRead, _, err = client.conn.ReadFromUDP(buffer)
-		return bytesRead, err
-	})
-
-	if !rspDelivered {
-		log.Error("Could not deliver answer")
-	}
-	//client.respond(message)
+	message.Id = req.Id
+	log.Debug(fmt.Sprintf("Sending DATA %s", message.Id))
+	client.respond(message)
 }
 
 
@@ -138,7 +125,6 @@ func (client *StatelessClient) respond(message *proto.Message) {
 	var msgBytes, err = json.Marshal(message)
 	handleErr(err)
 
-	//println("write ", string(msgBytes))
 	client.conn.WriteToUDP(msgBytes, client.addr)
 }
 
@@ -164,7 +150,7 @@ func main() {
 		buf := make([]byte, 1000)
 		for {
 			if bytesRead, addr, err := conn.ReadFromUDP(buf); err != nil {
-				log.Error("receiving message from client", "error", err)
+				//log.Error("receiving message from client", "error", err)
 
 			} else {
 				var rqBytes = buf[:bytesRead]
