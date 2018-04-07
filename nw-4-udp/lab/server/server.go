@@ -7,25 +7,23 @@ import (
 	"net"
 	"os"
 	//"strconv"
-	//"network-labs/nw-4-udp/lab/proto/neww"
-	//"network-labs/nw-4-udp/lab/proto"
 	"encoding/json"
 	"strconv"
 	"math"
 	"network-labs/nw-4-udp/lab/proto"
+	//"time"
+	"time"
 )
 
-/*
-порядок доставки сообщений
-retry если ответ не пришел за отведенное время
-SYN ACK зашить в rq/rsp
- */
-//
+
+var MESSAGES = make(map[string]bool)
+
 
 type StatelessClient struct {
-	logger 	log.Logger    // Объект для печати логов
-	conn   	*net.UDPConn  // Объект TCP-соединения
-	addr 	*net.UDPAddr
+	logger 			log.Logger    // Объект для печати логов
+	conn   			*net.UDPConn  // Объект TCP-соединения
+	addr 			*net.UDPAddr
+	lastMessageId 	string
 }
 
 
@@ -34,6 +32,18 @@ func NewClient(conn *net.UDPConn, addr *net.UDPAddr) *StatelessClient {
 		conn:   	conn,
 		addr:		addr,
 		logger:		log.New(fmt.Sprintf("Client %s", addr)),
+	}
+}
+
+
+func messageNotExists(id string) bool {
+	var idAlreadyExists, _ = MESSAGES[id]
+	if !idAlreadyExists {
+		MESSAGES[id] = true
+		return true
+
+	} else {
+		return false
 	}
 }
 
@@ -74,7 +84,10 @@ func countCircleSquare(circle proto.Circle) (float64, error) {
 func (client *StatelessClient) handleRequest(req *proto.Message) {
 	var message *proto.Message
 
-	//client.respond(proto.NewMessage(proto.CMD_ACK, nil))
+	var ack = proto.NewMessage(proto.CMD_ACK, nil)
+	ack.Id = req.Id
+	log.Debug(fmt.Sprintf("Sending ACK %s", ack.Id))
+	client.sendReliably(ack)
 
 	switch req.Command {
 	case proto.CMD_QUIT:
@@ -115,9 +128,16 @@ func (client *StatelessClient) handleRequest(req *proto.Message) {
 		message = proto.NewMessage(proto.CMD_UNKNOWN, "unknown command")
 	}
 
+	time.Sleep(1 * time.Second)
+
 	message.Id = req.Id
+	client.lastMessageId = message.Id
 	log.Debug(fmt.Sprintf("Sending DATA %s", message.Id))
-	client.respond(message)
+	client.sendReliably(message)
+
+	//client.conn.Close()
+	//client.respond(message)
+	MESSAGES[message.Id] = true
 }
 
 
@@ -126,6 +146,25 @@ func (client *StatelessClient) respond(message *proto.Message) {
 	handleErr(err)
 
 	client.conn.WriteToUDP(msgBytes, client.addr)
+}
+
+
+func (client *StatelessClient) sendReliably(message *proto.Message) *proto.Message {
+	var serialized, err = json.Marshal(message)
+	handleErr(err)
+
+	var retriesLeft = 20
+	for retriesLeft > 0 {
+
+		time.Sleep(50 * time.Millisecond)
+		log.Debug(fmt.Sprintf("Out. Retries left: %s, %s", strconv.Itoa(retriesLeft), message.Id))
+		client.conn.WriteToUDP(serialized, client.addr)
+
+		retriesLeft--
+	}
+
+	// message was not delivered :(
+	return nil
 }
 
 
@@ -150,7 +189,7 @@ func main() {
 		buf := make([]byte, 1000)
 		for {
 			if bytesRead, addr, err := conn.ReadFromUDP(buf); err != nil {
-				//log.Error("receiving message from client", "error", err)
+				//log.Error("receiving message from client error")
 
 			} else {
 				var rqBytes = buf[:bytesRead]
@@ -160,7 +199,12 @@ func main() {
 				var err = json.Unmarshal(rqBytes, &rq)
 				handleErr(err)
 
-				go NewClient(conn, addr).handleRequest(&rq)
+				if messageNotExists(rq.Id) {
+					NewClient(conn, addr).handleRequest(&rq)
+
+				} else {
+					log.Debug(fmt.Sprintf("Ignored duplicate %s", rq.Id))
+				}
 			}
 		}
 	}

@@ -16,7 +16,7 @@ import (
 	"strconv"
 )
 
-type DurableClient struct {
+type RetriableClient struct {
 	conn           	*net.UDPConn
 	addr           	*net.UDPAddr
 	timeoutSeconds 	int         // if there is no response within this time, message will be sent again
@@ -26,8 +26,8 @@ type DurableClient struct {
 	lastMessageId	string
 }
 
-func NewDurableClient(conn *net.UDPConn, addr *net.UDPAddr, retryTimeoutMillis int) *DurableClient {
-	return &DurableClient{
+func NewDurableClient(conn *net.UDPConn, addr *net.UDPAddr, retryTimeoutMillis int) *RetriableClient {
+	return &RetriableClient{
 		conn:           conn,
 		addr:           addr,
 		timeoutSeconds: retryTimeoutMillis,
@@ -43,7 +43,7 @@ func NewDurableClient(conn *net.UDPConn, addr *net.UDPAddr, retryTimeoutMillis i
 //}
 
 
-func (client *DurableClient) interact() {
+func (client *RetriableClient) interact() {
 	defer client.conn.Close()
 
 	for {
@@ -76,11 +76,43 @@ func (client *DurableClient) interact() {
 
 		// handle outcoming message
 		client.lastMessageId = message.Id
-		var rsp = client.sendReliably(message)
-		if nil == rsp {
+
+		//start:
+		var ack = client.sendReliably(message)
+		if nil == ack {
 			log.Error("Message could not be delivered :(")
 			continue
 		}
+
+
+		start:
+		var rsp proto.Message
+		var readRetries = 50
+		for readRetries > 0 {
+
+			// set timeout for nearest Read() call
+			client.conn.SetReadDeadline(time.Now().Add(time.Duration(100) * time.Millisecond))
+
+			// read into buffer and check if there was timeout error while reading
+			var buf = make([]byte, 1000)
+			var bytesRead, readErr = client.conn.Read(buf)
+
+			// deserialize into regular message and check if message == ACK
+			var ackBytes = buf[:bytesRead]
+			println("read ans ", string(ackBytes))
+
+			var deserializeErr = json.Unmarshal(ackBytes, &rsp)
+
+			if nil == readErr && nil == deserializeErr &&
+				client.lastMessageId == rsp.Id && proto.CMD_ACK != rsp.Command {
+				// there is an ACK for the message => it was delivered for sure
+				log.Debug("Answer has been received")
+				break
+			}
+
+			readRetries--
+		}
+
 
 		switch rsp.Command {
 		case proto.CMD_OK:
@@ -116,18 +148,25 @@ func (client *DurableClient) interact() {
 
 		default:
 			fmt.Printf("error: server reports unknown status %q\n", rsp.Command)
+			log.Debug("Starting again")
+			goto start
 		}
+
+		//var ack = proto.NewMessage(proto.CMD_ACK, nil)
+		//ack.Id = rsp.Id
+		//client.sendReliably(ack)
+
 	}
 }
 
 
-func (client *DurableClient) sendReliably(message *proto.Message) *proto.Message {
+func (client *RetriableClient) sendReliably(message *proto.Message) *proto.Message {
 	var serialized, err = json.Marshal(message)
 	handleErr(err)
 
 	var retriesLeft = 50
 	for retriesLeft > 0 {
-		log.Debug(fmt.Sprintf("Sending message. Retries left: %s", strconv.Itoa(retriesLeft)))
+		log.Debug(fmt.Sprintf("Sending message. Retries left: %s, %s", strconv.Itoa(retriesLeft), message.Id))
 		client.conn.Write(serialized)
 
 		// set timeout for nearest Read() call
@@ -139,7 +178,7 @@ func (client *DurableClient) sendReliably(message *proto.Message) *proto.Message
 
 		// deserialize into regular message and check if message == ACK
 		var ackBytes = buf[:bytesRead]
-		//println("got ", string(ackBytes))
+		println("read ACK ", string(ackBytes))
 		var ack proto.Message
 		var deserializeErr = json.Unmarshal(ackBytes, &ack)
 
