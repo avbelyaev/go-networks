@@ -84,11 +84,13 @@ func countCircleSquare(circle proto.Circle) (float64, error) {
 func (client *StatelessClient) handleRequest(req *proto.Message) {
 	var message *proto.Message
 
+	// send ACK with id from request
 	var ack = proto.NewMessage(proto.CMD_ACK, nil)
 	ack.Id = req.Id
 	log.Debug(fmt.Sprintf("Sending ACK %s", ack.Id))
 	client.sendReliably(ack)
 
+	// handle message content
 	switch req.Command {
 	case proto.CMD_QUIT:
 		message = proto.NewMessage(proto.CMD_OK, nil)
@@ -128,15 +130,16 @@ func (client *StatelessClient) handleRequest(req *proto.Message) {
 		message = proto.NewMessage(proto.CMD_UNKNOWN, "unknown command")
 	}
 
+	// because why not?
 	time.Sleep(1 * time.Second)
 
+	// send actual answer with request's Id
 	message.Id = req.Id
 	client.lastMessageId = message.Id
 	log.Debug(fmt.Sprintf("Sending DATA %s", message.Id))
 	client.sendReliably(message)
 
-	//client.conn.Close()
-	//client.respond(message)
+	// mark message's Id as processed
 	MESSAGES[message.Id] = true
 }
 
@@ -157,7 +160,7 @@ func (client *StatelessClient) sendReliably(message *proto.Message) *proto.Messa
 	for retriesLeft > 0 {
 
 		time.Sleep(50 * time.Millisecond)
-		log.Debug(fmt.Sprintf("Out. Retries left: %s, %s", strconv.Itoa(retriesLeft), message.Id))
+		log.Debug(fmt.Sprintf("Sending. Retries left: %s, %s", strconv.Itoa(retriesLeft), message.Id))
 		client.conn.WriteToUDP(serialized, client.addr)
 
 		retriesLeft--
@@ -193,17 +196,22 @@ func main() {
 
 			} else {
 				var rqBytes = buf[:bytesRead]
-				log.Info("Got", "msg", string(rqBytes))
-
 				var rq proto.Message
 				var err = json.Unmarshal(rqBytes, &rq)
-				handleErr(err)
+				
+				if nil == err {
+					// ignore message if it was already processed
+					// on every new message (not dup) make goroutine
+					if messageNotExists(rq.Id) {
+						log.Info("Incoming msg", "msg", string(rqBytes))
+						go NewClient(conn, addr).handleRequest(&rq)
 
-				if messageNotExists(rq.Id) {
-					NewClient(conn, addr).handleRequest(&rq)
-
+					} else {
+						log.Debug(fmt.Sprintf("Ignored duplicate %s", rq.Id))
+					}
+				
 				} else {
-					log.Debug(fmt.Sprintf("Ignored duplicate %s", rq.Id))
+					log.Debug("Could not parse message")
 				}
 			}
 		}

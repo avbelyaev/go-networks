@@ -38,6 +38,10 @@ func NewMessage(command string, payload interface{}) *Message {
 	}
 }
 
+func (message *Message) UpdateId() {
+	message.Id = uuid.Must(uuid.NewV4()).String()
+}
+
 type Point struct {
 	// коорд Х, float
 	CoordX string `json:"x,Number"`
