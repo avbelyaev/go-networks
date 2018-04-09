@@ -139,29 +139,21 @@ func (client *DurableClient) sendReliably(message *proto.Message) *proto.Message
 	var serialized, err = json.Marshal(message)
 	handleErr(err)
 
-	var ack proto.Message
+	var ack *proto.Message
 	var writeRetries = MAX_WRITE_RETRIES
 
 	for writeRetries > 0 {
 		log.Debug(fmt.Sprintf("Sending. Retries left: %s, %s", strconv.Itoa(writeRetries), message.Id))
 		client.conn.Write(serialized)
 
-		// set timeout for nearest Read() call
-		client.conn.SetReadDeadline(time.Now().Add(time.Duration(UDP_READ_DEADLINE_MILLIS) * time.Millisecond))
 
-		// read into buffer and check if there was timeout error while reading
-		var buf = make([]byte, BUFFER_SIZE_BYTES)
-		var bytesRead, readTimeoutErr = client.conn.Read(buf)
-
-		// deserialize into regular message and check if message == ACK
-		var ackBytes = buf[:bytesRead]
-		var deserializeErr = json.Unmarshal(ackBytes, &ack)
-		// println("read ACK ", string(ackBytes))
-
-		// message was delivered if ACK that we got == ACK we were looking for
-		if nil == readTimeoutErr && nil == deserializeErr && client.lastMessageId == ack.Id {
-			log.Debug("Ack for message has been acquired")
-			return &ack
+		ack = client.readConditionally(func(msg *proto.Message) bool {
+			// message was delivered if ACK that we got == ACK we were looking for
+			return client.lastMessageId == msg.Id && proto.CMD_ACK == msg.Command
+		})
+		if nil != ack {
+			log.Debug("Ack for message has been received")
+			return ack
 		}
 
 		writeRetries--
@@ -171,36 +163,50 @@ func (client *DurableClient) sendReliably(message *proto.Message) *proto.Message
 }
 
 
-// read message that is not an ACK. 
+// reads message that is not an ACK. 
 func (client *DurableClient) readReliably() *proto.Message {
-	var rsp proto.Message
+	var rsp *proto.Message
 
 	var readRetries = MAX_READ_RETRIES
 	for readRetries > 0 {
 
-		// set timeout for nearest Read() call
-		client.conn.SetReadDeadline(time.Now().Add(time.Duration(UDP_READ_DEADLINE_MILLIS) * time.Millisecond))
-
-		// read into buffer and check if there was timeout error while reading
-		var buf = make([]byte, BUFFER_SIZE_BYTES)
-		var bytesRead, readErr = client.conn.Read(buf)
-
-		// deserialize into regular message and check if message == ACK
-		var rspBytes = buf[:bytesRead]
-		var deserializeErr = json.Unmarshal(rspBytes, &rsp)
-		// println("read ans ", string(rspBytes))
-
-		// answer is a message that we were looking for (by id). ACKs are ignored
-		if nil == readErr && nil == deserializeErr &&
-			client.lastMessageId == rsp.Id && proto.CMD_ACK != rsp.Command {
+		rsp = client.readConditionally(func(msg *proto.Message) bool {
+			// answer is a message that we were looking for (by id). ACKs are ignored
+			return client.lastMessageId == msg.Id && proto.CMD_ACK != msg.Command
+		})
+		if nil != rsp {
 			log.Debug("Answer has been received")
-			return &rsp
+			return rsp
 		}
 
 		readRetries--
 	}
 
 	return nil
+}
+
+
+func (client *DurableClient) readConditionally(targetMsgCondition func(msg *proto.Message) bool) *proto.Message {
+	// set timeout for nearest Read() call
+	client.conn.SetReadDeadline(time.Now().Add(time.Duration(UDP_READ_DEADLINE_MILLIS) * time.Millisecond))
+
+	// read into buffer and check if there was timeout error while reading
+	var buf = make([]byte, BUFFER_SIZE_BYTES)
+	var bytesRead, readErr = client.conn.Read(buf)
+
+	// deserialize into regular message
+	var msgBytes = buf[:bytesRead]
+	var rsp proto.Message
+	var deserializeErr = json.Unmarshal(msgBytes, &rsp)
+	// println("read ", string(msgBytes))
+
+	if nil == readErr && nil == deserializeErr && targetMsgCondition(&rsp) {
+		log.Debug("Traget message acquired")
+		return &rsp
+	
+	} else {
+		return nil
+	}
 }
 
 
