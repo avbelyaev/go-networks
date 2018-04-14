@@ -112,7 +112,7 @@ func (client *StatelessClient) handleRequest(req *proto.Request) bool {
 			}
 		}
 		if errorMsg == "" {
-			client.respond(proto.RSP_STATUS_OK, nil)
+			// client.respond(proto.RSP_STATUS_OK, nil)
 
 		} else {
 			client.logger.Error("count failed", "reason", errorMsg)
