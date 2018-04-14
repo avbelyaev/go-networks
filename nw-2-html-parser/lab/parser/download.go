@@ -9,6 +9,8 @@ import (
 	"io"
 )
 
+var UNIQUE_TITLES map[string]bool = make(map[string]bool)
+
 func getAttr(node *html.Node, key string) string {
 	for _, attr := range node.Attr {
 		if attr.Key == key {
@@ -109,7 +111,11 @@ func search(node *html.Node) []*Item {
 		innerHTML := getInnerHTML(nodeAsString)
 		article.Title = cleanTitle(innerHTML)
 
-		items = append(items, &article)
+		var titleAlreadyExists, _ = UNIQUE_TITLES[article.Title]
+		if (!titleAlreadyExists) {
+			items = append(items, &article)
+			UNIQUE_TITLES[article.Title] = true
+		}
 	}
 	return items
 }
